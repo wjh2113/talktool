@@ -1,0 +1,28 @@
+{
+  "name": "talktool-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev:h5": "uni",
+    "build:h5": "uni build",
+    "dev:mp-weixin": "uni -p mp-weixin",
+    "build:mp-weixin": "uni build -p mp-weixin"
+  },
+  "dependencies": {
+    "@dcloudio/uni-app": "vue3",
+    "@dcloudio/uni-components": "vue3",
+    "@dcloudio/uni-h5": "vue3",
+    "@dcloudio/uni-mp-weixin": "vue3",
+    "vue": "^3.4.21"
+  },
+  "devDependencies": {
+    "@dcloudio/types": "^3.4.8",
+    "@dcloudio/uni-automator": "vue3",
+    "@dcloudio/uni-cli-shared": "vue3",
+    "@dcloudio/uni-stacktracey": "vue3",
+    "@dcloudio/vite-plugin-uni": "vue3",
+    "@vue/runtime-core": "^3.4.21",
+    "sass": "^1.77.0",
+    "vite": "5.2.8"
+  }
+}

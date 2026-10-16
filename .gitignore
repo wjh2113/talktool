@@ -1,0 +1,7 @@
+node_modules/
+.DS_Store
+_to_delete/
+backend/.venv/
+backend/data/
+**/__pycache__/
+*.pyc
