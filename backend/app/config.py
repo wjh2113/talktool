@@ -57,6 +57,41 @@ MIN_USER_TURNS = int(_env("MIN_USER_TURNS", "1"))            # 用户有效发�
 STALE_SESSION_MIN = int(_env("STALE_SESSION_MIN", "120"))     # 超过该时长仍未结束 → abandoned
 CUSTOM_DRILL_LIMIT = int(_env("CUSTOM_DRILL_LIMIT", "30"))    # 每个用户最多保留的自定义场景数
 
+# ---- 省 Token / 防刷 ----
+def _cost(name: str, default: str):
+    v = _env(name, default)
+    return float(v) if v else None            # 留空 = 不设单次成本上限
+
+HISTORY_TURNS = int(_env("HISTORY_TURNS", "6"))            # 对练时只带最近 N 轮（AI+用户为 1 轮）
+REPLY_MAX_TOKENS = int(_env("REPLY_MAX_TOKENS", "150"))    # 对练回复输出上限
+REPORT_MAX_TOKENS = int(_env("REPORT_MAX_TOKENS", "1200")) # 报告输出上限（逐句复盘已拆出去）
+SHORT_REPORT_TURNS = int(_env("SHORT_REPORT_TURNS", "3"))  # 用户发言 ≤ N 句的报告改用 LLM_CAPABILITY
+REVIEW_CAPABILITY = _env("REVIEW_CAPABILITY", "fast-chat") # 逐句复盘（按需生成）
+ASR_MIN_SPEECH_MS = int(_env("ASR_MIN_SPEECH_MS", "300"))  # 录音里有效人声少于该时长 → 不送识别
+MAX_COST_REPLY = _cost("MAX_COST_REPLY", "0.03")           # 单次调用成本上限（元），对应网关 maxCostCny
+MAX_COST_REPORT = _cost("MAX_COST_REPORT", "0.2")
+MAX_COST_OTHER = _cost("MAX_COST_OTHER", "0.1")            # 自定义场景 / 示范稿 / 逐句复盘
+DAILY_SESSION_LIMIT = int(_env("DAILY_SESSION_LIMIT", "30"))     # 每个用户每天最多开始的训练数（0 = 不限）
+DAILY_IP_SESSION_LIMIT = int(_env("DAILY_IP_SESSION_LIMIT", "100"))  # 同一 IP 每天最多开始的训练数（防换 ID 刷）
+
+# ---- 账号 ----
+ADMIN_USERNAME = _env("ADMIN_USERNAME")          # 启动时若该用户不存在则创建为管理员
+ADMIN_PASSWORD = _env("ADMIN_PASSWORD")
+TOKEN_DAYS = int(_env("TOKEN_DAYS", "30"))        # 登录有效期
+LOGIN_FAIL_LIMIT = int(_env("LOGIN_FAIL_LIMIT", "10"))  # 同一 IP 15 分钟内登录/注册失败次数上限
+
+# ---- 每日用量上限（按账号，0 = 不限）----
+DAILY_TTS_LIMIT = int(_env("DAILY_TTS_LIMIT", "300"))          # 示范朗读（未命中缓存才计数）
+DAILY_PRONOUNCE_LIMIT = int(_env("DAILY_PRONOUNCE_LIMIT", "150"))
+DAILY_CUSTOM_LIMIT = int(_env("DAILY_CUSTOM_LIMIT", "10"))      # 每天生成自定义场景次数
+DAILY_REVIEW_LIMIT = int(_env("DAILY_REVIEW_LIMIT", "50"))      # 逐句复盘 / 示范稿 / 重新生成报告
+MAX_USER_TURNS = int(_env("MAX_USER_TURNS", "30"))              # 单场训练最多发言轮数
+
+# ---- 音频清理 ----
+AUDIO_RETENTION_DAYS = int(_env("AUDIO_RETENTION_DAYS", "7"))   # 对话中的 AI 语音保留天数
+TTS_CACHE_DAYS = int(_env("TTS_CACHE_DAYS", "180"))             # 缓存语音（开场白/示范）多久没用就删
+CLEANUP_INTERVAL_HOURS = float(_env("CLEANUP_INTERVAL_HOURS", "6"))
+
 CORS_ORIGINS = [o.strip() for o in _env("CORS_ORIGINS", "*").split(",") if o.strip()]
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)

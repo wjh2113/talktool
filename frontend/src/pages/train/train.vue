@@ -135,7 +135,7 @@ async function listen() {
   }
   if (!alive) return
   if (res.empty) {
-    uni.showToast({ title: '没听清，请再说一次', icon: 'none' })
+    uni.showToast({ title: res.reason === 'no_speech' ? '没听到声音，请靠近麦克风再说一次' : '没听清，请再说一次', icon: 'none' })
     return listen()
   }
   aiSpeak(res.ai)
@@ -164,7 +164,7 @@ async function finish() {
   ended = true
   cleanup()
   state.value = 'ending'
-  uni.showLoading({ title: '生成报告中', mask: true })
+  uni.showLoading({ title: '正在结束', mask: true })
   try {
     await api.endSession(sessionId, 'finish')
   } catch (e) {}

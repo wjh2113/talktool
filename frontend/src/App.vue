@@ -1,9 +1,10 @@
 <script setup>
 import { onLaunch } from '@dcloudio/uni-app'
-import { getUserId } from './utils/request'
+import { getToken, goLogin } from './utils/request'
 
 onLaunch(() => {
-  getUserId() // 首次启动生成设备用户 ID（MVP 不做登录）
+  // 没登录 → 去登录页（令牌过期由接口 401 统一处理）
+  if (!getToken()) setTimeout(goLogin, 0)
 })
 </script>
 

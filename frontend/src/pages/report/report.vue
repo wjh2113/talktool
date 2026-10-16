@@ -13,7 +13,7 @@
     </view>
 
     <!-- 正常报告 -->
-    <block v-if="s.status === 'completed' && r">
+    <block v-if="ready">
       <view class="card score-card">
         <view class="total">
           <text class="total-num">{{ r.total_score }}</text>
@@ -68,11 +68,20 @@
       <text class="muted metric-foot">共发言 {{ m.turns }} 次 · {{ m.chars }} 字 · 有效说话 {{ m.speech_sec }} 秒。参考：日常对话 140–270 字/分较舒适。</text>
     </view>
 
-    <block v-if="s.status === 'completed' && r">
+    <block v-if="ready">
       <!-- 逐句复盘 + 示范 + 跟读 -->
-      <view v-if="r.turn_reviews && r.turn_reviews.length" class="card block">
-        <text class="block-title">逐句复盘</text>
-        <view v-for="tr in r.turn_reviews" :key="tr.turn" class="review">
+      <view v-if="userTurns > 0" class="card block">
+        <view class="replay-head">
+          <text class="block-title no-mb">逐句复盘（{{ userTurns }} 句）</text>
+          <text v-if="reviews.length" class="muted">听示范 · 跟读 · 收藏</text>
+        </view>
+        <view v-if="!reviews.length" class="review-gen">
+          <text class="muted">AI 会针对你说的每一句，给出更好的说法和改进点，可以直接跟读练习。</text>
+          <view class="gen-btn" :class="{ loading: reviewLoading }" @tap="loadReviews">
+            {{ reviewLoading ? '正在生成…' : '生成逐句复盘' }}
+          </view>
+        </view>
+        <view v-for="tr in reviews" :key="tr.turn" class="review">
           <text v-if="contextOf(tr.turn)" class="ctx">对方：{{ contextOf(tr.turn) }}</text>
           <view class="said">
             <text class="said-label">我说</text>
@@ -117,6 +126,13 @@
     </block>
 
     <!-- 报告生成失败 -->
+    <!-- 报告生成中（后台生成，页面轮询） -->
+    <view v-else-if="s.report_status === 'pending'" class="card empty">
+      <view class="spinner" />
+      <text class="empty-title">报告生成中…</text>
+      <text class="empty-sub">AI 正在复盘你的表现，通常需要 10–40 秒。可以先离开，稍后在“训练记录”里查看。</text>
+    </view>
+
     <view v-else-if="s.status === 'completed'" class="card empty">
       <image class="empty-icon" src="/static/icons/clock.png" />
       <text class="empty-title">报告生成失败</text>
@@ -157,7 +173,7 @@
 
 <script setup>
 import { ref, computed } from 'vue'
-import { onLoad } from '@dcloudio/uni-app'
+import { onLoad, onUnload } from '@dcloudio/uni-app'
 import { api } from '../../utils/api'
 import { durationText, mdToHtml } from '../../utils/format'
 import ReadAloud from '../../components/ReadAloud/ReadAloud.vue'
@@ -168,6 +184,43 @@ const showTranscript = ref(false)
 const saved = ref({}) // text -> note id
 
 const r = computed(() => s.value && s.value.report)
+const ready = computed(() => s.value && s.value.status === 'completed' && r.value && s.value.report_status !== 'pending')
+let pollTimer = null
+let pollCount = 0
+
+function applyDetail(d) {
+  s.value = d
+  reviews.value = (d.report && d.report.turn_reviews) || []
+  const map = {}
+  ;(d.saved_notes || []).forEach((n) => (map[n.text] = n.id))
+  saved.value = map
+}
+
+function startPolling() {
+  clearTimeout(pollTimer)
+  if (!s.value || s.value.report_status !== 'pending') return
+  if (pollCount++ > 90) return // 最多轮询约 4 分钟
+  pollTimer = setTimeout(async () => {
+    try {
+      applyDetail(await api.session(s.value.id))
+    } catch (e) {}
+    startPolling()
+  }, pollCount < 10 ? 2000 : 4000)
+}
+const reviews = ref([]) // 逐句复盘：按需生成（点开才调用大模型）
+const reviewLoading = ref(false)
+
+async function loadReviews() {
+  if (reviewLoading.value) return
+  reviewLoading.value = true
+  try {
+    reviews.value = (await api.turnReviews(s.value.id)) || []
+    if (!reviews.value.length) uni.showToast({ title: '暂时没有可复盘的内容', icon: 'none' })
+  } catch (e) {
+  } finally {
+    reviewLoading.value = false
+  }
+}
 const m = computed(() => s.value && s.value.metrics)
 const userTurns = computed(() => (s.value ? s.value.transcript.filter((t) => t.role === 'user').length : 0))
 const totalDelta = computed(() =>
@@ -223,12 +276,9 @@ async function toggleSave(kind, text, source) {
 }
 
 async function retry() {
-  uni.showLoading({ title: '生成中', mask: true })
-  try {
-    s.value = await api.retryReport(s.value.id)
-  } finally {
-    uni.hideLoading()
-  }
+  applyDetail(await api.retryReport(s.value.id))
+  pollCount = 0
+  startPolling()
 }
 
 function toRecords() {
@@ -242,11 +292,11 @@ function again() {
 
 onLoad(async (q) => {
   from.value = q.from || ''
-  s.value = await api.session(q.id)
-  const map = {}
-  ;(s.value.saved_notes || []).forEach((n) => (map[n.text] = n.id))
-  saved.value = map
+  applyDetail(await api.session(q.id))
+  startPolling()
 })
+
+onUnload(() => clearTimeout(pollTimer))
 </script>
 
 <style lang="scss" scoped>
@@ -292,6 +342,13 @@ onLoad(async (q) => {
 .fillers { margin-top: 18rpx; display: flex; flex-wrap: wrap; align-items: center; gap: 12rpx; }
 .filler { font-size: 24rpx; color: #E68A1A; background: #FFF4E5; padding: 4rpx 14rpx; border-radius: 10rpx; }
 .metric-foot { display: block; margin-top: 18rpx; line-height: 1.6; }
+.review-gen { margin-top: 18rpx; display: flex; flex-direction: column; }
+.gen-btn {
+  margin-top: 20rpx; height: 76rpx; line-height: 76rpx; text-align: center; border-radius: 16rpx;
+  background: $tt-tag-bg; color: $tt-primary; font-size: 28rpx; font-weight: 600;
+  &.loading { opacity: 0.6; }
+}
+.replay-head + .review { margin-top: 20rpx; }
 .review { padding: 24rpx 0; border-top: 1rpx solid #EEF1F5; &:first-of-type { border-top: none; padding-top: 0; } }
 .ctx { display: block; font-size: 24rpx; color: $tt-text-3; line-height: 1.6; margin-bottom: 12rpx; }
 .said { display: flex; }
@@ -321,6 +378,11 @@ onLoad(async (q) => {
 .empty-icon { width: 64rpx; height: 64rpx; }
 .empty-title { font-size: 34rpx; font-weight: 700; margin-bottom: 24rpx; }
 .empty-sub { font-size: 27rpx; color: $tt-text-2; text-align: center; line-height: 1.6; }
+.spinner {
+  width: 72rpx; height: 72rpx; border-radius: 50%; margin-bottom: 36rpx;
+  border: 6rpx solid $tt-tag-bg; border-top-color: $tt-primary; animation: spin 0.9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
 .retry { margin-top: 32rpx; color: $tt-primary; font-size: 28rpx; }
 .replay-head { display: flex; justify-content: space-between; align-items: center; }
 .transcript { margin-top: 24rpx; }

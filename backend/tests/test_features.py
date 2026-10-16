@@ -40,6 +40,22 @@ INSERT INTO session(user_id, drill_id, started_at, status, duration_sec) VALUES 
 """
 
 
+
+async def end_wait(svc, u, sid, reason="finish"):
+    """结束训练后等后台报告生成完，再取详情（报告现在是异步生成的）。"""
+    first = await svc.end_session(u, sid, reason)
+    if first["status"] == "completed":
+        assert first["report_status"] in ("pending", "ready"), first["report_status"]
+    await svc.drain_tasks()
+    return svc.get_session_detail(u, sid)
+
+
+async def retry_wait(svc, u, sid):
+    first = await svc.retry_report(u, sid)
+    assert first["report_status"] == "pending"
+    await svc.drain_tasks()
+    return svc.get_session_detail(u, sid)
+
 def make_speech_pcm(segments, rate=16000):
     """segments: [(ms, amplitude)]，生成 16k int16 PCM（正弦波模拟人声）。"""
     a = array.array("h")
@@ -68,9 +84,14 @@ def test_migration():
     assert con.execute("SELECT COUNT(*) FROM category WHERE is_system=1").fetchone()[0] == 1
     con.close()
     db.init_db()  # 幂等
-    # 旧库只有 1 个公共分类：不会重复播种
+    # 旧库：同名分类/场景复用，缺的内置场景补上，旧场景和旧记录保留
     from app.services import sessions as svc
-    assert [c["name"] for c in svc.list_categories()] == ["当众表达"]
+    cats = svc.list_categories()
+    assert len(cats) == len(db.ALL_CATEGORIES)
+    sc = [s for c in cats if c["name"] == "当众表达" for s in c["scenarios"] if s["title"] == "临时点名发言"]
+    assert len(sc) == 1
+    titles = [d["title"] for d in svc.get_scenario(sc[0]["id"])["drills"]]
+    assert "老场景" in titles and len(titles) == 1 + 2, titles
     print("✓ migration")
 
 
@@ -117,12 +138,15 @@ async def test_features():
         assert r1["metrics"]["pauses"] == 1
         await svc.run_turn(U, sid, pcm, "pcm", 16000)
         backdate(sid, 100)
-        return await svc.end_session(U, sid, "finish")
+        return await end_wait(svc, U, sid, "finish")
 
     d1 = await full_session()
     assert d1["status"] == "completed"
     assert d1["metrics"]["turns"] == 2 and d1["metrics"]["pauses"] == 2 and d1["metrics"]["rate"]
-    tr = d1["report"]["turn_reviews"]
+    assert d1["report"]["turn_reviews"] is None  # 逐句复盘按需生成
+    tr = await svc.get_turn_reviews(U, d1["id"])
+    assert await svc.get_turn_reviews(U, d1["id"]) == tr
+    assert svc.get_session_detail(U, d1["id"])["report"]["turn_reviews"] == tr
     assert len(tr) == 2 and tr[0]["turn"] == 1 and tr[0]["user_text"] and tr[0]["better"], tr
     assert d1["previous"] is None
 
@@ -175,10 +199,11 @@ async def test_features():
     cs = (await svc.start_session(U, cd["id"]))["session_id"]
     await svc.run_turn(U, cs, pcm, "pcm", 16000)
     backdate(cs, 90)
-    assert (await svc.end_session(U, cs, "finish"))["status"] == "completed"
+    assert (await end_wait(svc, U, cs, "finish"))["status"] == "completed"
     lst = library.list_custom_drills(U)
     assert len(lst) == 1 and lst[0]["times"] == 1 and lst[0]["best"]
-    assert all(s["drill_count"] == 1 for c in svc.list_categories() for s in c["scenarios"])  # 不混进公共场景
+    assert sum(s["drill_count"] for c in svc.list_categories() for s in c["scenarios"]) == \
+        sum(len(s["drills"]) for c in db.ALL_CATEGORIES for s in c["scenarios"])  # 不混进公共场景
     rec = svc.list_sessions(U)["items"][0]
     assert rec["is_custom"] is True
     library.delete_custom_drill(U, cd["id"])
@@ -211,6 +236,7 @@ class FakeResp:
 
 class FakeClient:
     calls = []
+    fail_next = 0
 
     async def __aenter__(self): return self
     async def __aexit__(self, *a): return False
@@ -219,11 +245,17 @@ class FakeClient:
         FakeClient.calls.append((url, json, data, files))
         if url.endswith("/api/ai/chat"):
             prompt = json["messages"][-1]["content"]
+            if FakeClient.fail_next:
+                FakeClient.fail_next -= 1
+                return FakeResp(502, {"detail": "upstream"})
             if "turn_reviews" in prompt:
-                assert "平均语速" in prompt and "用户[第1句]" in prompt
+                assert "[1] 对方：" in prompt and "四个维度" not in prompt
+                content = ('```json\n{"turn_reviews":[{"turn":1,"better":"更好的说法","tip":"先结论"},'
+                           '{"turn":9,"better":"越界"}]}\n```')
+            elif "四个维度" in prompt:
+                assert "平均语速" in prompt and "turn_reviews" not in prompt
                 content = ('好的```json\n{"scores":{"逻辑表达":8,"语言组织":7,"应变能力":6,"情绪管理":8},"summary":"ok",'
-                           '"highlights":["h"],"improvements":["i"],"detail_comment":"d",'
-                           '"turn_reviews":[{"turn":1,"better":"更好的说法","tip":"先结论"},{"turn":9,"better":"越界"}]}\n```')
+                           '"highlights":["h"],"improvements":["i"],"detail_comment":"d"}\n```')
             elif "用户描述" in prompt:
                 content = json_dumps({"title": "和房东谈退押金", "description": "你是租客……", "ai_role": "强势房东",
                                       "user_role": "租客", "training_goal": "据理力争", "opening_line": "墙都划花了还想全退？",
@@ -254,13 +286,48 @@ async def gateway_test(drill_id, pcm):
     config.GATEWAY_API_KEY = "aam_test"
     config.GATEWAY_BASE_URL = "http://gw"
     gateway._client = lambda: FakeClient()
+    gateway.RETRY_WAIT_SEC = 0
     U = "gw"
+    chats = lambda: [c for c in FakeClient.calls if c[0].endswith("/api/ai/chat")]
     sid = (await svc.start_session(U, drill_id))["session_id"]
     await svc.run_turn(U, sid, pcm, "pcm", 16000)
+    reply = chats()[-1][1]
+    assert reply["max_tokens"] == config.REPLY_MAX_TOKENS == 150
+    assert reply["idempotencyKey"].startswith("tt-") and reply["maxCostCny"] == config.MAX_COST_REPLY
+    asr = [c for c in FakeClient.calls if c[0].endswith("/api/ai/transcribe")][-1]
+    assert asr[2]["idempotencyKey"].startswith("tt-")
+    # 纯静音不送识别
+    n_asr = len([c for c in FakeClient.calls if c[0].endswith("/api/ai/transcribe")])
+    assert (await svc.run_turn(U, sid, b"\0" * 32000, "pcm", 16000))["reason"] == "no_speech"
+    assert len([c for c in FakeClient.calls if c[0].endswith("/api/ai/transcribe")]) == n_asr
     backdate(sid, 80)
-    det = await svc.end_session(U, sid, "finish")
-    assert det["report"]["turn_reviews"] == [
-        {"turn": 1, "user_text": "我觉得然后要加强跟进", "better": "更好的说法", "tip": "先结论"}], det["report"]
+    FakeClient.fail_next = 1  # 报告第一次 502 → 同一幂等键自动重试一次
+    n_chat = len(chats())
+    det = await end_wait(svc, U, sid, "finish")
+    rep_calls = chats()[n_chat:]
+    assert len(rep_calls) == 2 and rep_calls[0][1]["idempotencyKey"] == rep_calls[1][1]["idempotencyKey"]
+    assert rep_calls[1][1]["capability"] == config.LLM_CAPABILITY  # 只说了 1 句 → 短训练用 fast-chat
+    assert rep_calls[1][1]["max_tokens"] == config.REPORT_MAX_TOKENS
+    assert det["report"]["summary"] == "ok" and det["report"]["turn_reviews"] is None
+    n_chat = len(chats())
+    tr = await svc.get_turn_reviews(U, sid)
+    assert tr == [{"turn": 1, "user_text": "我觉得然后要加强跟进", "better": "更好的说法", "tip": "先结论"}], tr
+    assert chats()[-1][1]["capability"] == config.REVIEW_CAPABILITY
+    await svc.get_turn_reviews(U, sid)
+    assert len(chats()) == n_chat + 1  # 第二次展开不再调用
+    # 重新生成报告换幂等键
+    await retry_wait(svc, U, sid)
+    assert chats()[-1][1]["idempotencyKey"] != rep_calls[0][1]["idempotencyKey"]
+    # 长训练（> SHORT_REPORT_TURNS 句）用 quality-chat
+    from app.services import report as report_svc
+    long_tr = [{"role": "user", "text": "x"}] * (config.SHORT_REPORT_TURNS + 1)
+    assert report_svc.report_capability(long_tr) == config.REPORT_CAPABILITY
+    # 开场白语音按文字缓存：同一场景第二次开始不再合成
+    opening = svc.get_drill(drill_id)["opening_line"]
+    n_open = lambda: len([c for c in FakeClient.calls if c[0].endswith("/api/ai/tts") and c[1]["input"] == opening])
+    assert n_open() == 1
+    s2 = await svc.start_session(U, drill_id)
+    assert n_open() == 1 and s2["ai"]["audio_url"].startswith("/media/audio/t_")
     assert det["metrics"]["filler_top"] == [{"word": "然后", "count": 1}]
     p = await practice.pronounce(U, pcm, "pcm", 16000, "更好的说法")
     assert p["score"] == 82 and p["issues"][0]["quote"] == "说法"
@@ -273,6 +340,28 @@ async def gateway_test(drill_id, pcm):
     assert t1["audio_url"] == t2["audio_url"] and t1["audio_url"].startswith("/media/audio/t_")
     tts_calls = [c for c in FakeClient.calls if c[0].endswith("/api/ai/tts") and c[1]["input"] == "示范一句"]
     assert len(tts_calls) == 1  # 缓存命中
+    # 对话历史只带最近 N 轮
+    from app.services.voice import to_chat_messages
+    hist = [{"role": "ai" if i % 2 == 0 else "user", "text": str(i)} for i in range(20)]
+    msgs = to_chat_messages("SYS", hist, config.HISTORY_TURNS)
+    assert len(msgs) == 1 + config.HISTORY_TURNS * 2 and "已省略" in msgs[0]["content"] and msgs[-1]["content"] == "19"
+    assert len(to_chat_messages("SYS", hist[:4], 6)) == 5
+    # 每日限额（按用户 / 按 IP）
+    config.DAILY_SESSION_LIMIT, config.DAILY_IP_SESSION_LIMIT = 2, 3
+    for _ in range(2):
+        await svc.start_session("limit-u", drill_id, "1.2.3.4")
+    try:
+        await svc.start_session("limit-u", drill_id, "1.2.3.4")
+        raise AssertionError("用户限额未生效")
+    except svc.TooMany:
+        pass
+    await svc.start_session("limit-u2", drill_id, "1.2.3.4")
+    try:
+        await svc.start_session("limit-u3", drill_id, "1.2.3.4")
+        raise AssertionError("IP 限额未生效")
+    except svc.TooMany as e:
+        assert "网络" in str(e)
+    await svc.start_session("limit-u3", drill_id, "5.6.7.8")
     print("✓ features (gateway)")
 
 

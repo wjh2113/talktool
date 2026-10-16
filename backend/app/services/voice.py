@@ -8,6 +8,7 @@
 换成方案A时，前端改为 WebSocket 推流，后端在 RealtimeVoiceProvider 中做中继即可，
 会话、计时、转写记录、报告生成等逻辑都不需要改。
 """
+import hashlib
 import io
 import random
 import wave
@@ -42,7 +43,12 @@ def normalize_audio(data: bytes, fmt: str, sample_rate: int = 16000):
     return data, f"audio.{fmt}", AUDIO_MIME.get(fmt, "application/octet-stream")
 
 
-def to_chat_messages(system_prompt: str, transcript: list) -> list:
+def to_chat_messages(system_prompt: str, transcript: list, max_turns: int = 0) -> list:
+    """转成 chat messages。max_turns>0 时只保留最近 N 轮（每轮 = AI + 用户 2 条），省输入 Token。"""
+    if max_turns and len(transcript) > max_turns * 2:
+        dropped = len(transcript) - max_turns * 2
+        transcript = transcript[-max_turns * 2:]
+        system_prompt += f"\n（前面 {dropped} 句对话已省略，请保持前后一致。）"
     msgs = [{"role": "system", "content": system_prompt}]
     for t in transcript:
         msgs.append({"role": "assistant" if t["role"] == "ai" else "user", "content": t["text"]})
@@ -58,10 +64,10 @@ class VoiceProvider:
     async def opening(self, drill: dict) -> str:
         raise NotImplementedError
 
-    async def transcribe(self, audio: bytes, fmt: str, sample_rate: int) -> str:
+    async def transcribe(self, audio: bytes, fmt: str, sample_rate: int, session_id=None) -> str:
         raise NotImplementedError
 
-    async def reply(self, drill: dict, transcript: list) -> str:
+    async def reply(self, drill: dict, transcript: list, session_id=None) -> str:
         raise NotImplementedError
 
     async def synthesize(self, text: str):
@@ -79,15 +85,18 @@ class PipelineVoiceProvider(VoiceProvider):
             {"role": "system", "content": build_system_prompt(drill)},
             {"role": "user", "content": "（训练开始。请你作为角色先开口，用一句话把情境抛给我。）"},
         ]
-        return await gateway.chat(msgs, max_tokens=150)
+        return await gateway.chat(msgs, max_tokens=config.REPLY_MAX_TOKENS, max_cost=config.MAX_COST_REPLY)
 
-    async def transcribe(self, audio, fmt, sample_rate):
+    async def transcribe(self, audio, fmt, sample_rate, session_id=None):
         data, filename, mime = normalize_audio(audio, fmt, sample_rate)
-        return await gateway.transcribe(data, filename, mime)
+        key = gateway.idem_key("asr", session_id, hashlib.sha1(audio).hexdigest()) if session_id else None
+        return await gateway.transcribe(data, filename, mime, idempotency_key=key)
 
-    async def reply(self, drill, transcript):
-        msgs = to_chat_messages(build_system_prompt(drill), transcript)
-        return await gateway.chat(msgs, max_tokens=300)
+    async def reply(self, drill, transcript, session_id=None):
+        msgs = to_chat_messages(build_system_prompt(drill), transcript, config.HISTORY_TURNS)
+        key = gateway.idem_key("reply", session_id, len(transcript)) if session_id else None
+        return await gateway.chat(msgs, max_tokens=config.REPLY_MAX_TOKENS, idempotency_key=key,
+                                  max_cost=config.MAX_COST_REPLY)
 
     async def synthesize(self, text):
         return await gateway.speech(text)
@@ -113,10 +122,10 @@ class MockVoiceProvider(VoiceProvider):
     async def opening(self, drill):
         return drill.get("opening_line") or "我们开始吧，你先说说你的想法？"
 
-    async def transcribe(self, audio, fmt, sample_rate):
+    async def transcribe(self, audio, fmt, sample_rate, session_id=None):
         return random.choice(MOCK_USER_LINES)
 
-    async def reply(self, drill, transcript):
+    async def reply(self, drill, transcript, session_id=None):
         user_turns = sum(1 for t in transcript if t["role"] == "user")
         return MOCK_AI_LINES[min(user_turns - 1, len(MOCK_AI_LINES) - 1)] if user_turns else MOCK_AI_LINES[0]
 

@@ -10,7 +10,8 @@ talktool/
 │   │   ├── config.py        环境变量
 │   │   ├── db.py            建表 / 种子数据 / 时间工具
 │   │   ├── schema.sql       建表 SQL
-│   │   ├── seed.sql         种子数据 SQL（8 分类 / 21 场景）
+│   │   ├── seed.sql         内置场景 SQL（8 分类 / 33 个场景大类 / 56 个训练）
+│   │   ├── seed_more.py     第二批内置场景（新增场景写这里）
 │   │   ├── seed_data.py     种子数据源（改场景内容改这里）
 │   │   └── services/
 │   │       ├── gateway.py   AIapiMgr 网关客户端（chat / transcribe / tts）
@@ -43,10 +44,10 @@ python3 scripts/check_gateway.py      # 先确认网关的 chat / tts / speech �
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-- 首次启动自动建库（`backend/data/talktool.db`）并写入 21 个场景。重置场景：`python3 -m app.db --reseed`
+- 首次启动自动建库（`backend/data/talktool.db`）并写入 56 个内置训练。之后每次启动都会按标题补上代码里新增的场景（只增不改，已部署的库也会自动更新）。
 - 接口文档：http://127.0.0.1:8000/docs
 - `.env` 里 `GATEWAY_API_KEY` 留空 = **Mock 模式**：不调网关，可走通全部页面和报告（AI 用固定台词）
-- 测试：`python3 -m tests.test_flow && python3 -m tests.test_features`
+- 测试：`python3 -m tests.test_flow && python3 -m tests.test_features && python3 -m tests.test_auth`
 
 ## 2. 启动前端
 
@@ -107,6 +108,45 @@ AI 讲话中（播放 TTS） → 可以说话（自动开麦） → 用户讲话
 
 **升级已部署的服务**：直接重新部署即可。后端启动时会自动给旧库补列、建 `note` 表、建“我的场景”系统分类，原有训练记录不受影响。部署前在网关给 talktool 租户勾选 `pronunciation` 能力，然后在 backend 目录跑一下 `python3 scripts/check_gateway.py`。
 
-## 7. MVP 未做
+## 7. 省 Token 与防刷
 
-登录（目前用设备 ID 区分用户）、支付、分享、排行榜、场景管理后台（改 `seed_data.py` 后执行 `--reseed`）。
+| 措施 | 配置（backend/.env） |
+|---|---|
+| 场景固定开场白的语音按文字缓存，同一场景只合成一次 | — |
+| 录音里有效人声不足 300ms（噪声、误触）不送识别 | `ASR_MIN_SPEECH_MS` |
+| 逐句复盘改为在报告里点开时才生成，生成后缓存 | `REVIEW_CAPABILITY=fast-chat` |
+| 对练只带最近 6 轮对话 + 精简后的角色设定 | `HISTORY_TURNS` |
+| 对练回复输出上限 150、报告 1200 | `REPLY_MAX_TOKENS` `REPORT_MAX_TOKENS` |
+| 用户只说了 ≤3 句的短训练，报告用 fast-chat | `SHORT_REPORT_TURNS` |
+| 对话 / 识别 / 报告 / 示范稿 / 自定义场景都带幂等键 `idempotencyKey`；遇到 429/502/503/504 或网络异常，用同一个键自动重试一次，不重复扣积分 | — |
+| 每次大模型调用带 `maxCostCny` 单次成本上限 | `MAX_COST_REPLY` `MAX_COST_REPORT` `MAX_COST_OTHER`（留空 = 不限） |
+| 每个用户、每个 IP 每天能开始的训练数 | `DAILY_SESSION_LIMIT=30` `DAILY_IP_SESSION_LIMIT=100`（0 = 不限） |
+
+成本上限的默认值是估的：上线后看后端日志里每次调用的 `points=`，再把上限调到实际花费的 2~3 倍。按 IP 限额依赖 nginx 传真实 IP + uvicorn `--proxy-headers`（部署脚本已配好）。
+
+## 8. 账号与邀请码
+
+- 所有接口都需要登录（`/api/health`、`/api/ping` 除外）。用户名 + 密码登录，令牌 30 天有效（`TOKEN_DAYS`）。
+- **管理员**：在 `backend/.env` 写上 `ADMIN_USERNAME` / `ADMIN_PASSWORD`，后端启动时如果这个用户不存在就自动创建（不会覆盖已有密码）。也可以在服务器上执行：
+  ```bash
+  cd /opt/talktool/backend
+  .venv/bin/python -m app.admin create-admin boss 你的密码   # 创建或重置管理员
+  .venv/bin/python -m app.admin invite 5 1 30                # 生成 5 个邀请码，各用 1 次，30 天有效
+  .venv/bin/python -m app.admin users                        # 查看用户
+  ```
+- **邀请码**：管理员登录后在「我的 → 管理后台」生成（数量、每个可用次数、有效天数、备注），可复制邀请码或 H5 注册链接（`/#/pages/login/login?code=XXXX`，打开自动填好邀请码），也能停用。
+- **用户管理**：管理后台可查看用户的训练次数、最近登录，停用（立即下线）/ 启用账号，重置密码（生成一次性临时密码）。
+- **老数据**：上线账号前在某台设备上练过的记录，用这台设备注册时会自动归到新账号。
+- **防暴力破解**：同一 IP 15 分钟内登录 / 注册失败 10 次会被暂时锁定（`LOGIN_FAIL_LIMIT`）。
+
+## 9. 稳定性与成本
+
+- **防刷**：每个账号每天的示范朗读、跟读评测、自定义场景、复盘 / 示范稿 / 重新生成报告都有上限（`DAILY_*_LIMIT`），单场训练最多 30 轮发言（`MAX_USER_TURNS`）。示范朗读只能读系统生成过的内容（本人的收藏、报告里的逐句示范、场景示范稿），不能拿来合成任意文字。
+- **报告异步生成**：点“结束训练”立刻进入报告页，报告在后台生成，页面自动刷新；失败可以重新生成。服务重启时中断的报告会标记为失败。
+- **音频清理**：后端每 6 小时清理一次：对话里的 AI 语音保留 7 天（`AUDIO_RETENTION_DAYS`），缓存的开场白 / 示范语音 180 天没人用才删（`TTS_CACHE_DAYS`）；同时清理过期令牌和旧计数。
+- **nginx 直出音频**：生产环境 `/media/audio/` 由 nginx 直接读 `backend/data/audio`，不经过 Python（见 `deploy/nginx-talktool.conf`，部署脚本会放开目录读权限）。
+- **SQLite WAL**：启动时开启 WAL 模式，读写互不阻塞，并发请求下不再容易出现 “database is locked”。
+
+## 10. MVP 未做
+
+微信一键登录 / 手机号登录（目前是用户名密码 + 邀请码）、支付、分享、排行榜、场景管理后台（改 `seed_data.py` 后执行 `--reseed`）。

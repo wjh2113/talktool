@@ -1,5 +1,8 @@
 """业务逻辑：内容查询、训练会话、报告、训练记录。与 Web 框架无关，便于测试。"""
+import asyncio
 import hashlib
+import json
+import os
 import logging
 import time
 import uuid
@@ -20,6 +23,25 @@ class NotFound(Exception):
 
 class BadRequest(Exception):
     pass
+
+
+from .quota import QuotaExceeded as TooMany  # noqa: E402  超限 → 429
+from . import quota  # noqa: E402
+
+# 后台任务（报告生成）：持有引用防止被回收；测试里可以 await drain_tasks()
+_tasks = set()
+
+
+def _spawn(coro):
+    t = asyncio.get_running_loop().create_task(coro)
+    _tasks.add(t)
+    t.add_done_callback(_tasks.discard)
+    return t
+
+
+async def drain_tasks():
+    while _tasks:
+        await asyncio.gather(*list(_tasks), return_exceptions=True)
 
 
 # ---------------- 内容 ----------------
@@ -106,7 +128,12 @@ async def _synthesize(provider, session_id, text: str, cache: bool = False):
     """合成语音并保存为文件；失败时不阻断（前端退化为按时长模拟）。cache=True 时同一文本复用文件。"""
     if cache:
         name = "t_" + hashlib.sha1(f"{config.TTS_VOICE}|{config.TTS_SPEED}|{text}".encode()).hexdigest()[:20] + ".mp3"
-        if (config.AUDIO_DIR / name).exists():
+        path = config.AUDIO_DIR / name
+        if path.exists():
+            try:
+                os.utime(path)  # 记录最近使用时间，清理任务只删很久没用的缓存
+            except OSError:
+                pass
             return _audio_url(name)
     else:
         name = f"s{session_id}_{uuid.uuid4().hex[:10]}.mp3"
@@ -121,7 +148,30 @@ async def _synthesize(provider, session_id, text: str, cache: bool = False):
     return _audio_url(name)
 
 
-async def tts(text: str) -> dict:
+def _tts_allowed(user_id: str, text: str) -> bool:
+    """只允许朗读系统生成过的内容：本人的收藏、本人报告里的逐句示范、场景示范稿。防止被拿去合成任意文字。"""
+    with get_conn() as conn:
+        if conn.execute("SELECT 1 FROM note WHERE user_id = ? AND text = ?", (user_id, text)).fetchone():
+            return True
+        if conn.execute("SELECT 1 FROM drill WHERE sample_script = ? AND sample_script != ''", (text,)).fetchone():
+            return True
+        rows = conn.execute(
+            """SELECT r.turn_reviews FROM report r JOIN session s ON s.id = r.session_id
+               WHERE s.user_id = ? AND r.turn_reviews NOT IN ('[]', 'null', '')
+               ORDER BY r.id DESC LIMIT 200""", (user_id,)).fetchall()
+    for r in rows:
+        for item in loads(r[0], None) or []:
+            if isinstance(item, dict) and item.get("better") == text:
+                return True
+    return False
+
+
+def _tts_cached(text: str) -> bool:
+    name = "t_" + hashlib.sha1(f"{config.TTS_VOICE}|{config.TTS_SPEED}|{text}".encode()).hexdigest()[:20] + ".mp3"
+    return (config.AUDIO_DIR / name).exists()
+
+
+async def tts(text: str, user_id: str = None) -> dict:
     """示范话术朗读（练习本 / 报告逐句示范用），按文本缓存。"""
     text = (text or "").strip()
     if not text:
@@ -129,6 +179,11 @@ async def tts(text: str) -> dict:
     if len(text) > 500:
         raise BadRequest("文本过长（最多 500 字）")
     provider = get_provider()
+    if user_id is not None and not _tts_cached(text):
+        if not _tts_allowed(user_id, text):
+            raise BadRequest("只能朗读示范话术")
+        if not provider.mock:
+            quota.hit(user_id, "tts", config.DAILY_TTS_LIMIT, "今天的示范朗读次数已用完，明天再来吧")
     return {"audio_url": await _synthesize(provider, None, text, cache=True), "mock": provider.mock}
 
 
@@ -152,14 +207,30 @@ def _get_session_row(conn, session_id: int, user_id: str) -> dict:
     return row_to_dict(s)
 
 
-async def start_session(user_id: str, drill_id: int) -> dict:
+def _check_daily_limit(conn, user_id: str, ip: str) -> None:
+    """防刷：每个用户 / 每个 IP 每天能开始的训练数。用户 ID 由前端生成可以伪造，所以再按 IP 兜底。"""
+    today = now().replace(hour=0, minute=0, second=0).strftime(TIME_FMT)
+    if config.DAILY_SESSION_LIMIT:
+        n = conn.execute("SELECT COUNT(*) FROM session WHERE user_id = ? AND started_at >= ?",
+                         (user_id, today)).fetchone()[0]
+        if n >= config.DAILY_SESSION_LIMIT:
+            raise TooMany(f"今天已经练了 {n} 次，休息一下，明天再来吧")
+    if config.DAILY_IP_SESSION_LIMIT and ip:
+        n = conn.execute("SELECT COUNT(*) FROM session WHERE ip = ? AND started_at >= ?", (ip, today)).fetchone()[0]
+        if n >= config.DAILY_IP_SESSION_LIMIT:
+            raise TooMany("当前网络今天的训练次数已达上限，请明天再试")
+
+
+async def start_session(user_id: str, drill_id: int, ip: str = None) -> dict:
     provider = get_provider()
     with get_conn() as conn:
         drill = _load_drill(conn, drill_id, user_id)
         if drill["status"] != "online":
             raise BadRequest("该场景已删除")
+        _check_daily_limit(conn, user_id, ip)
         sid = conn.execute(
-            "INSERT INTO session(user_id, drill_id, started_at) VALUES (?,?,?)", (user_id, drill_id, now_str())
+            "INSERT INTO session(user_id, drill_id, started_at, ip) VALUES (?,?,?,?)",
+            (user_id, drill_id, now_str(), ip)
         ).lastrowid
     t0 = time.perf_counter()
     text = await provider.opening(drill)
@@ -167,7 +238,8 @@ async def start_session(user_id: str, drill_id: int) -> dict:
     with get_conn() as conn:
         _append(conn, sid, "ai", text)
     t1 = time.perf_counter()
-    audio_url = await _synthesize(provider, sid, text)
+    # 固定开场白按文字缓存：同一场景只合成一次
+    audio_url = await _synthesize(provider, sid, text, cache=bool(drill.get("opening_line")))
     tts_ms = int((time.perf_counter() - t1) * 1000)
     return {
         "session_id": sid,
@@ -186,24 +258,32 @@ async def run_turn(user_id: str, session_id: int, audio: bytes, fmt: str, sample
         if s["status"] != "in_progress":
             raise BadRequest("训练已结束")
         drill = _load_drill(conn, s["drill_id"])
+    turns = sum(1 for t in loads(s["transcript"], []) if t.get("role") == "user")
+    if config.MAX_USER_TURNS and turns >= config.MAX_USER_TURNS:
+        raise BadRequest("本次训练轮数已达上限，请点“结束训练”查看报告")
     if not audio or len(audio) < 1000:
         return {"empty": True, "user_text": "", "ai": None, "timings": {}}
 
+    try:
+        audio_info = metrics_svc.analyze_audio(audio, fmt, sample_rate)
+    except Exception as e:  # noqa: BLE001  表达数据只是锦上添花，失败不影响对话
+        log.warning("录音分析失败：%s", e)
+        audio_info = {}
+    # 录音里几乎没有人声（环境噪声、误触）→ 不送识别，省一次调用
+    if audio_info and (audio_info.get("speech_ms") or 0) < config.ASR_MIN_SPEECH_MS:
+        return {"empty": True, "reason": "no_speech", "user_text": "", "ai": None, "timings": {}}
+
     t0 = time.perf_counter()
-    user_text = (await provider.transcribe(audio, fmt, sample_rate)).strip()
+    user_text = (await provider.transcribe(audio, fmt, sample_rate, session_id)).strip()
     asr_ms = int((time.perf_counter() - t0) * 1000)
     if not user_text:
         return {"empty": True, "user_text": "", "ai": None, "timings": {"asr_ms": asr_ms}}
 
-    try:
-        m = metrics_svc.turn_metrics(metrics_svc.analyze_audio(audio, fmt, sample_rate), user_text)
-    except Exception as e:  # noqa: BLE001  表达数据只是锦上添花，失败不影响对话
-        log.warning("表达数据计算失败：%s", e)
-        m = None
+    m = metrics_svc.turn_metrics(audio_info, user_text) if audio_info else None
     with get_conn() as conn:
         transcript = _append(conn, session_id, "user", user_text, {"metrics": m} if m else None)
     t1 = time.perf_counter()
-    ai_text = await provider.reply(drill, transcript)
+    ai_text = await provider.reply(drill, transcript, session_id)
     llm_ms = int((time.perf_counter() - t1) * 1000)
     with get_conn() as conn:
         _append(conn, session_id, "ai", ai_text)
@@ -224,17 +304,35 @@ def _save_report(conn, session_id: int, rep: dict) -> None:
         """INSERT OR REPLACE INTO report(session_id, scores, total_score, summary, highlights,
            improvements, detail_comment, turn_reviews, created_at) VALUES (?,?,?,?,?,?,?,?,?)""",
         (session_id, dumps(rep["scores"]), rep["total_score"], rep["summary"], dumps(rep["highlights"]),
-         dumps(rep["improvements"]), rep["detail_comment"], dumps(rep.get("turn_reviews", [])), now_str()),
+         dumps(rep["improvements"]), rep["detail_comment"], dumps(rep.get("turn_reviews")), now_str()),
     )
 
 
+async def _report_job(session_id: int, retry: bool = False) -> None:
+    """后台生成报告：成功 → ready，失败 → failed（前端可点“重新生成”）。"""
+    try:
+        with get_conn() as conn:
+            s = row_to_dict(conn.execute("SELECT * FROM session WHERE id = ?", (session_id,)).fetchone())
+            drill = _load_drill(conn, s["drill_id"])
+        transcript = loads(s["transcript"], [])
+        summary = loads(s.get("metrics"), {}) or metrics_svc.summarize(transcript)
+        rep = await report_svc.generate_report(drill, transcript, s["duration_sec"], metrics_svc.describe(summary),
+                                               session_id=session_id, retry=retry)
+        with get_conn() as conn:
+            _save_report(conn, session_id, rep)
+            conn.execute("UPDATE session SET report_status = 'ready' WHERE id = ?", (session_id,))
+    except Exception as e:  # noqa: BLE001
+        log.exception("报告生成失败 session=%s：%s", session_id, e)
+        with get_conn() as conn:
+            conn.execute("UPDATE session SET report_status = 'failed' WHERE id = ?", (session_id,))
+
+
 async def end_session(user_id: str, session_id: int, reason: str = "finish") -> dict:
-    """结束训练：计算时长 → 判定状态 → 汇总表达数据 → completed 时调用 LLM 生成报告。"""
+    """结束训练：计算时长 → 判定状态 → 汇总表达数据 → completed 时在后台生成报告，接口立即返回。"""
     with get_conn() as conn:
         s = _get_session_row(conn, session_id, user_id)
         if s["status"] != "in_progress":  # 幂等：重复结束直接返回
             return get_session_detail(user_id, session_id)
-        drill = _load_drill(conn, s["drill_id"])
         ended = now()
         duration = max(0, int((ended - parse_time(s["started_at"])).total_seconds()))
         transcript = loads(s["transcript"], [])
@@ -242,17 +340,13 @@ async def end_session(user_id: str, session_id: int, reason: str = "finish") -> 
         status = report_svc.decide_status(reason, duration, user_turns)
         summary = metrics_svc.summarize(transcript)
         conn.execute(
-            "UPDATE session SET ended_at = ?, duration_sec = ?, status = ?, metrics = ? WHERE id = ?",
-            (ended.strftime(TIME_FMT), duration, status, dumps(summary), session_id),
+            """UPDATE session SET ended_at = ?, duration_sec = ?, status = ?, metrics = ?, report_status = ?
+               WHERE id = ?""",
+            (ended.strftime(TIME_FMT), duration, status, dumps(summary),
+             "pending" if status == "completed" else "none", session_id),
         )
-
     if status == "completed":
-        try:
-            rep = await report_svc.generate_report(drill, transcript, duration, metrics_svc.describe(summary))
-            with get_conn() as conn:
-                _save_report(conn, session_id, rep)
-        except Exception as e:  # noqa: BLE001
-            log.exception("报告生成失败：%s", e)
+        _spawn(_report_job(session_id))
     return get_session_detail(user_id, session_id)
 
 
@@ -261,13 +355,39 @@ async def retry_report(user_id: str, session_id: int) -> dict:
         s = _get_session_row(conn, session_id, user_id)
         if s["status"] != "completed":
             raise BadRequest("该训练没有可生成的报告")
-        drill = _load_drill(conn, s["drill_id"])
-    transcript = loads(s["transcript"], [])
-    summary = loads(s.get("metrics"), {}) or metrics_svc.summarize(transcript)
-    rep = await report_svc.generate_report(drill, transcript, s["duration_sec"], metrics_svc.describe(summary))
+        if s.get("report_status") == "pending":
+            return get_session_detail(user_id, session_id)
+    if not config.MOCK:
+        quota.hit(user_id, "review", config.DAILY_REVIEW_LIMIT, "今天的报告重新生成次数已用完")
     with get_conn() as conn:
-        _save_report(conn, session_id, rep)
+        conn.execute("UPDATE session SET report_status = 'pending' WHERE id = ?", (session_id,))
+    _spawn(_report_job(session_id, retry=True))
     return get_session_detail(user_id, session_id)
+
+
+def recover_pending_reports() -> int:
+    """服务重启时，把中断的“生成中”标为失败，用户可以重新生成。"""
+    with get_conn() as conn:
+        return conn.execute("UPDATE session SET report_status = 'failed' WHERE report_status = 'pending'").rowcount
+
+
+async def get_turn_reviews(user_id: str, session_id: int) -> list:
+    """逐句复盘：报告里展开时才生成，生成后存进报告，再看不再花钱。"""
+    with get_conn() as conn:
+        s = _get_session_row(conn, session_id, user_id)
+        r = conn.execute("SELECT turn_reviews FROM report WHERE session_id = ?", (session_id,)).fetchone()
+        if not r:
+            raise BadRequest("这次训练没有报告")
+        cached = loads(r["turn_reviews"], None)
+        if cached:
+            return cached
+        drill = _load_drill(conn, s["drill_id"])
+    if not config.MOCK:
+        quota.hit(user_id, "review", config.DAILY_REVIEW_LIMIT, "今天的复盘生成次数已用完，明天再来吧")
+    reviews = await report_svc.generate_turn_reviews(drill, loads(s["transcript"], []), session_id)
+    with get_conn() as conn:
+        conn.execute("UPDATE report SET turn_reviews = ? WHERE session_id = ?", (dumps(reviews), session_id))
+    return reviews
 
 
 # ---------------- 记录 & 报告 ----------------
@@ -276,12 +396,25 @@ def _report_dict(r) -> dict:
     if not r:
         return None
     r = row_to_dict(r)
-    for k, default in (("scores", {}), ("highlights", []), ("improvements", []), ("turn_reviews", [])):
+    for k, default in (("scores", {}), ("highlights", []), ("improvements", []), ("turn_reviews", None)):
         r[k] = loads(r.get(k), default)
     return r
 
 
-def _summary_line(status: str, report: dict) -> str:
+def _report_status(status: str, stored: str, report) -> str:
+    """报告状态：ready / pending / failed / none（旧数据没有该字段，按有无报告推断）。"""
+    if status != "completed":
+        return "none"
+    if stored == "pending":  # 生成中（含“重新生成”时旧报告还在）
+        return "pending"
+    if report:
+        return "ready"
+    return stored if stored in ("pending", "failed") else "failed"
+
+
+def _summary_line(status: str, report: dict, report_status: str = None) -> str:
+    if report_status == "pending":
+        return "报告生成中…"
     if status == "too_short":
         return report_svc.TOO_SHORT_TEXT
     if status == "abandoned":
@@ -332,7 +465,8 @@ def get_session_detail(user_id: str, session_id: int) -> dict:
     s["report"] = rep
     s["previous"] = prev
     s["saved_notes"] = notes
-    s["summary_line"] = _summary_line(s["status"], rep)
+    s["report_status"] = _report_status(s["status"], s.get("report_status"), rep)
+    s["summary_line"] = _summary_line(s["status"], rep, s["report_status"])
     return s
 
 
@@ -352,7 +486,7 @@ def list_sessions(user_id: str, range_: str = "all", page: int = 1, page_size: i
         _expire_stale(conn, user_id)
         total = conn.execute(f"SELECT COUNT(*) FROM session s WHERE {' AND '.join(where)}", params).fetchone()[0]
         rows = conn.execute(
-            f"""SELECT s.id, s.drill_id, s.started_at, s.ended_at, s.duration_sec, s.status,
+            f"""SELECT s.id, s.drill_id, s.started_at, s.ended_at, s.duration_sec, s.status, s.report_status,
                        d.title AS drill_title, d.pressure_level, d.owner_id IS NOT NULL AS is_custom,
                        r.summary AS report_summary, r.total_score
                 FROM session s JOIN drill d ON d.id = s.drill_id
@@ -366,7 +500,8 @@ def list_sessions(user_id: str, range_: str = "all", page: int = 1, page_size: i
         r = row_to_dict(r)
         r["is_custom"] = bool(r["is_custom"])
         rep = {"summary": r.pop("report_summary")} if r["total_score"] is not None else None
-        r["summary_line"] = _summary_line(r["status"], rep)
+        r["report_status"] = _report_status(r["status"], r["report_status"], rep)
+        r["summary_line"] = _summary_line(r["status"], rep, r["report_status"])
         items.append(r)
     return {"items": items, "total": total, "page": page, "page_size": page_size,
             "has_more": page * page_size < total}

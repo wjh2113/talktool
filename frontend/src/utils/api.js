@@ -1,6 +1,23 @@
 import { request, uploadAudio } from './request'
 
 export const api = {
+  // 账号
+  login: (username, password) => request('/api/auth/login', { method: 'POST', data: { username, password } }),
+  register: (data) => request('/api/auth/register', { method: 'POST', data }),
+  logout: () => request('/api/auth/logout', { method: 'POST', silent: true }),
+  me: () => request('/api/auth/me', { silent: true }),
+  changePassword: (old_password, new_password) =>
+    request('/api/auth/password', { method: 'POST', data: { old_password, new_password } }),
+  updateProfile: (nickname) => request('/api/auth/profile', { method: 'PUT', data: { nickname } }),
+
+  // 管理员
+  adminInvites: () => request('/api/admin/invites'),
+  adminCreateInvites: (data) => request('/api/admin/invites', { method: 'POST', data }),
+  adminDisableInvite: (code) => request(`/api/admin/invites/${code}/disable`, { method: 'POST' }),
+  adminUsers: () => request('/api/admin/users'),
+  adminSetUserStatus: (id, status) => request(`/api/admin/users/${id}/status`, { method: 'POST', data: { status } }),
+  adminResetPassword: (id) => request(`/api/admin/users/${id}/reset-password`, { method: 'POST' }),
+
   health: () => request('/api/health', { silent: true }),
   ping: () => request('/api/ping', { silent: true, timeout: 5000 }),
   categories: () => request('/api/categories'),
@@ -13,6 +30,7 @@ export const api = {
   turn: (sessionId, rec) => uploadAudio(`/api/sessions/${sessionId}/turn`, rec),
   endSession: (sessionId, reason = 'finish') =>
     request(`/api/sessions/${sessionId}/end`, { method: 'POST', data: { reason }, timeout: 120000 }),
+  turnReviews: (sessionId) => request(`/api/sessions/${sessionId}/turn-reviews`, { method: 'POST', timeout: 90000 }),
   retryReport: (sessionId) => request(`/api/sessions/${sessionId}/report/retry`, { method: 'POST', timeout: 120000 }),
   sessions: (range = 'all', page = 1) => request(`/api/sessions?range=${range}&page=${page}&page_size=20`),
   session: (id) => request(`/api/sessions/${id}`),

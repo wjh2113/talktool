@@ -8,6 +8,9 @@ from zoneinfo import ZoneInfo
 
 from . import config
 from .seed_data import CATEGORIES
+from .seed_more import merge_into
+
+ALL_CATEGORIES = merge_into(CATEGORIES)
 
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
 TZ = ZoneInfo(config.APP_TIMEZONE)
@@ -30,6 +33,8 @@ def connect() -> sqlite3.Connection:
     conn = sqlite3.connect(config.DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA busy_timeout = 5000")   # 写锁冲突时等待而不是立刻报错
+    conn.execute("PRAGMA synchronous = NORMAL")  # WAL 下安全且更快
     return conn
 
 
@@ -60,6 +65,8 @@ MIGRATIONS = [
     ("drill", "sample_script", "TEXT NOT NULL DEFAULT ''"),
     ("session", "metrics", "TEXT NOT NULL DEFAULT '{}'"),
     ("report", "turn_reviews", "TEXT NOT NULL DEFAULT '[]'"),
+    ("session", "ip", "TEXT"),
+    ("session", "report_status", "TEXT NOT NULL DEFAULT 'none'"),
 ]
 
 
@@ -69,6 +76,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         if col not in cols:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_drill_owner ON drill(owner_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_session_ip ON session(ip, started_at)")
 
 
 def system_scenario_id(conn: sqlite3.Connection) -> int:
@@ -85,8 +93,10 @@ def system_scenario_id(conn: sqlite3.Connection) -> int:
 
 
 def init_db(reseed: bool = False) -> None:
-    """建表 + 旧库升级；公共分类为空（或 reseed=True）时写入种子数据。"""
+    """建表 + 旧库升级 + 增量补充内置场景（reseed=True 时先清空公共场景）。"""
     with get_conn() as conn:
+        # WAL：读写互不阻塞，多个请求同时访问更稳（设置一次会持久保存在库文件里）
+        conn.execute("PRAGMA journal_mode = WAL")
         conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
         _migrate(conn)
         empty = conn.execute("SELECT COUNT(*) FROM category WHERE is_system = 0").fetchone()[0] == 0
@@ -100,22 +110,30 @@ def init_db(reseed: bool = False) -> None:
             conn.execute("DELETE FROM scenario WHERE category_id IN (SELECT id FROM category WHERE is_system = 0)")
             conn.execute("DELETE FROM category WHERE is_system = 0")
             empty = True
-        if empty:
-            _seed(conn)
+        added = _sync_seed(conn)
+        if added and not empty:
+            import logging
+            logging.getLogger("talktool").info("已补充 %s 个内置训练场景", added)
         system_scenario_id(conn)
 
 
-def _seed(conn: sqlite3.Connection) -> None:
-    for ci, cat in enumerate(CATEGORIES):
-        cid = conn.execute(
-            "INSERT INTO category(name, sort_order) VALUES (?, ?)", (cat["name"], ci)
-        ).lastrowid
+def _sync_seed(conn: sqlite3.Connection) -> int:
+    """按名称/标题增量写入内置内容：缺什么补什么，不改动、不删除已有数据。返回新增训练数。"""
+    added = 0
+    for ci, cat in enumerate(ALL_CATEGORIES):
+        row = conn.execute("SELECT id FROM category WHERE name = ? AND is_system = 0", (cat["name"],)).fetchone()
+        cid = row[0] if row else conn.execute(
+            "INSERT INTO category(name, sort_order) VALUES (?, ?)", (cat["name"], ci)).lastrowid
         for si, sc in enumerate(cat["scenarios"]):
-            sid = conn.execute(
+            row = conn.execute("SELECT id FROM scenario WHERE category_id = ? AND title = ?",
+                               (cid, sc["title"])).fetchone()
+            sid = row[0] if row else conn.execute(
                 "INSERT INTO scenario(category_id, title, subtitle, sort_order) VALUES (?,?,?,?)",
-                (cid, sc["title"], sc["subtitle"], si),
-            ).lastrowid
+                (cid, sc["title"], sc.get("subtitle", ""), si)).lastrowid
             for di, d in enumerate(sc["drills"]):
+                if conn.execute("SELECT 1 FROM drill WHERE scenario_id = ? AND title = ? AND owner_id IS NULL",
+                                (sid, d["title"])).fetchone():
+                    continue
                 conn.execute(
                     """INSERT INTO drill(scenario_id, title, description, cover_image, pressure_level,
                        duration_min, mode, ai_role, user_role, training_goal, opening_line,
@@ -125,6 +143,8 @@ def _seed(conn: sqlite3.Connection) -> None:
                      d["duration_min"], "纯语音", d["ai_role"], d["user_role"], d["training_goal"],
                      d.get("opening_line", ""), d.get("system_prompt", ""), "online", di),
                 )
+                added += 1
+    return added
 
 
 def dumps(obj) -> str:

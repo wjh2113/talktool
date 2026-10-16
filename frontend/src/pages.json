@@ -69,6 +69,19 @@
       "style": {
         "navigationBarTitleText": "自定义场景"
       }
+    },
+    {
+      "path": "pages/login/login",
+      "style": {
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/admin/admin",
+      "style": {
+        "navigationBarTitleText": "管理后台",
+        "enablePullDownRefresh": true
+      }
     }
   ],
   "globalStyle": {

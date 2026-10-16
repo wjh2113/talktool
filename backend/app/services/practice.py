@@ -4,7 +4,7 @@ import random
 
 from .. import config
 from ..db import get_conn
-from . import gateway
+from . import gateway, quota
 from .prompts import build_script_messages
 from .sessions import BadRequest, _load_drill
 from .voice import normalize_audio
@@ -18,12 +18,15 @@ async def drill_script(user_id: str, drill_id: int) -> dict:
         d = _load_drill(conn, drill_id, user_id)
     if d.get("sample_script"):
         return {"drill_id": drill_id, "script": d["sample_script"]}
+    if not config.MOCK:
+        quota.hit(user_id, "review", config.DAILY_REVIEW_LIMIT, "今天的生成次数已用完，明天再来吧")
     if config.MOCK:
         script = (f"谢谢您给我这个机会。关于“{d['scenario_title']}”，我的想法有两点。第一，先把对方最关心的问题讲清楚；"
                   "第二，给出一个具体、可以马上落地的方案。如果您同意，我会后整理成文字发给大家。")
     else:
         script = (await gateway.chat(build_script_messages(d), capability=config.REPORT_CAPABILITY,
-                                     temperature=0.6, max_tokens=500)).strip().strip('"“”')
+                                     temperature=0.6, max_tokens=500, max_cost=config.MAX_COST_OTHER,
+                                     idempotency_key=gateway.idem_key("script", drill_id))).strip().strip('"“”')
     with get_conn() as conn:
         conn.execute("UPDATE drill SET sample_script = ? WHERE id = ?", (script, drill_id))
     return {"drill_id": drill_id, "script": script}
@@ -47,6 +50,7 @@ async def pronounce(user_id: str, audio: bytes, fmt: str, sample_rate: int, text
     if config.MOCK:
         res = _mock_pronounce(text)
     else:
+        quota.hit(user_id, "pronounce", config.DAILY_PRONOUNCE_LIMIT, "今天的跟读评测次数已用完，明天再来吧")
         data, filename, mime = normalize_audio(audio, fmt, sample_rate)
         raw = await gateway.pronounce(data, text, filename, mime)
         res = {

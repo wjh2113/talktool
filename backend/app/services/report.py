@@ -1,7 +1,9 @@
 """训练报告生成：边界判定（too_short / abandoned）+ LLM 结构化评估。"""
+import time
+
 from .. import config
 from . import gateway
-from .prompts import SCORE_DIMENSIONS, build_report_messages
+from .prompts import SCORE_DIMENSIONS, build_report_messages, build_turn_review_messages
 
 TOO_SHORT_TEXT = "本次对话时长过短，无法生成报告，可重新练习生成。"
 ABANDONED_TEXT = "本次会话已主动放弃，未生成报告，可重新练习生成。"
@@ -62,15 +64,18 @@ def normalize_report(raw: dict, transcript: list = None) -> dict:
         "highlights": as_list(raw.get("highlights"))[:5],
         "improvements": as_list(raw.get("improvements"))[:5],
         "detail_comment": str(raw.get("detail_comment") or "").strip(),
-        "turn_reviews": normalize_turn_reviews(raw.get("turn_reviews"), transcript),
+        # 逐句复盘改为按需生成：None = 还没生成
+        "turn_reviews": normalize_turn_reviews(raw["turn_reviews"], transcript) if raw.get("turn_reviews") else None,
     }
 
 
+def _mock_reviews(transcript: list) -> list:
+    return [{"turn": i + 1, "better": "我的看法有两点：第一，首次拜访用统一的需求清单把客户痛点问清楚；第二，每周复盘一次丢单原因。",
+             "tip": "先给结论，再分点展开"} for i in range(len(_user_texts(transcript)))]
+
+
 def mock_report(transcript: list) -> dict:
-    reviews = [{"turn": i + 1, "better": "我的看法有两点：第一，首次拜访用统一的需求清单把客户痛点问清楚；第二，每周复盘一次丢单原因。",
-                "tip": "先给结论，再分点展开"} for i in range(len(_user_texts(transcript)))]
     return normalize_report({
-        "turn_reviews": reviews,
         "scores": {"逻辑表达": 7, "语言组织": 6, "应变能力": 7, "情绪管理": 8},
         "summary": "（Mock 报告）表态及时，展开还可以更有条理",
         "highlights": ["被点名后能第一时间表态，没有冷场", "能结合自己接触客户的经验来谈"],
@@ -84,9 +89,38 @@ def mock_report(transcript: list) -> dict:
     }, transcript)
 
 
-async def generate_report(drill: dict, transcript: list, duration_sec: int, metrics_text: str = "") -> dict:
+def report_capability(transcript: list) -> str:
+    """用户只说了两三句的短训练，用便宜的 fast-chat 就够了。"""
+    return config.LLM_CAPABILITY if len(_user_texts(transcript)) <= config.SHORT_REPORT_TURNS \
+        else config.REPORT_CAPABILITY
+
+
+async def generate_report(drill: dict, transcript: list, duration_sec: int, metrics_text: str = "",
+                          session_id=None, retry: bool = False) -> dict:
     if config.MOCK:
         return mock_report(transcript)
     msgs = build_report_messages(drill, transcript, duration_sec, metrics_text)
-    text = await gateway.chat(msgs, capability=config.REPORT_CAPABILITY, temperature=0.3, max_tokens=2500)
+    key = None
+    if session_id:
+        # 首次生成用固定键（网络重试不重复扣费）；手动“重新生成”换键，按分钟区分避免连点重复扣费
+        key = gateway.idem_key("report", session_id, "retry", int(time.time() // 60)) if retry \
+            else gateway.idem_key("report", session_id)
+    text = await gateway.chat(msgs, capability=report_capability(transcript), temperature=0.3,
+                              max_tokens=config.REPORT_MAX_TOKENS, idempotency_key=key,
+                              max_cost=config.MAX_COST_REPORT)
     return normalize_report(gateway.extract_json(text), transcript)
+
+
+async def generate_turn_reviews(drill: dict, transcript: list, session_id=None) -> list:
+    """逐句复盘：用户在报告里点开时才生成。"""
+    n = len(_user_texts(transcript))
+    if not n:
+        return []
+    if config.MOCK:
+        return normalize_turn_reviews(_mock_reviews(transcript), transcript)
+    msgs = build_turn_review_messages(drill, transcript)
+    key = gateway.idem_key("review", session_id, n) if session_id else None
+    text = await gateway.chat(msgs, capability=config.REVIEW_CAPABILITY, temperature=0.4,
+                              max_tokens=min(1500, 130 * n + 100), idempotency_key=key,
+                              max_cost=config.MAX_COST_OTHER)
+    return normalize_turn_reviews(gateway.extract_json(text).get("turn_reviews"), transcript)

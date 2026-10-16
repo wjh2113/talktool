@@ -3,7 +3,7 @@ import logging
 
 from .. import config
 from ..db import get_conn, now_str, row_to_dict, system_scenario_id
-from . import gateway
+from . import gateway, quota
 from .prompts import build_custom_drill_messages
 from .sessions import BadRequest, NotFound, _load_drill, _public_drill
 
@@ -96,13 +96,15 @@ async def create_custom_drill(user_id: str, description: str, pressure: str = "�
                              (user_id,)).fetchone()[0]
     if count >= config.CUSTOM_DRILL_LIMIT:
         raise BadRequest(f"自定义场景最多保留 {config.CUSTOM_DRILL_LIMIT} 个，请先删除一些")
+    quota.hit(user_id, "custom", config.DAILY_CUSTOM_LIMIT, "今天生成自定义场景的次数已用完，明天再来吧")
 
     if config.MOCK:
         g = _mock_custom(description, pressure)
     else:
         text = await gateway.chat(build_custom_drill_messages(description, pressure),
                                   capability=config.CUSTOM_CAPABILITY, temperature=0.7, max_tokens=900,
-                                  user_id=user_id)
+                                  user_id=user_id, max_cost=config.MAX_COST_OTHER,
+                                  idempotency_key=gateway.idem_key("custom", user_id, description, pressure))
         g = gateway.extract_json(text)
         if g.get("error"):
             raise BadRequest(f"这个情境不适合生成训练：{_clip(g['error'], 60)}")

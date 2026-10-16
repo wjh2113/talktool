@@ -12,6 +12,36 @@ from app.services import sessions as svc, gateway, report, voice   # noqa: E402
 U = "tester"
 
 
+
+async def end_wait(svc, u, sid, reason="finish"):
+    """结束训练后等后台报告生成完，再取详情（报告现在是异步生成的）。"""
+    first = await svc.end_session(u, sid, reason)
+    if first["status"] == "completed":
+        assert first["report_status"] in ("pending", "ready"), first["report_status"]
+    await svc.drain_tasks()
+    return svc.get_session_detail(u, sid)
+
+
+async def retry_wait(svc, u, sid):
+    first = await svc.retry_report(u, sid)
+    assert first["report_status"] == "pending"
+    await svc.drain_tasks()
+    return svc.get_session_detail(u, sid)
+
+def _speech(ms_voice=1500, rate=16000):
+    """0.3s 静音 + 一段“人声”（正弦波）+ 0.3s 静音，16k PCM"""
+    import array, math
+    a = array.array("h", [0] * int(rate * 0.3))
+    a.extend(int(0.3 * 32767 * math.sin(2 * math.pi * 220 * i / rate)) for i in range(int(rate * ms_voice / 1000)))
+    a.extend([0] * int(rate * 0.3))
+    if sys.byteorder == "big":
+        a.byteswap()
+    return a.tobytes()
+
+
+SPEECH = _speech()
+
+
 def backdate(sid, seconds):
     with db.get_conn() as c:
         st = (db.now() - timedelta(seconds=seconds)).strftime(db.TIME_FMT)
@@ -22,8 +52,13 @@ async def main():
     db.init_db()
     cats = svc.list_categories()
     assert len(cats) == 8, len(cats)
-    assert sum(len(c["scenarios"]) for c in cats) == 21
-    assert all(s["drill_count"] == 1 for c in cats for s in c["scenarios"])
+    expect = db.ALL_CATEGORIES
+    assert sum(len(c["scenarios"]) for c in cats) == sum(len(c["scenarios"]) for c in expect)
+    assert sum(s["drill_count"] for c in cats for s in c["scenarios"]) == \
+        sum(len(s["drills"]) for c in expect for s in c["scenarios"])
+    db.init_db()  # 幂等：再跑一次不重复写入
+    assert sum(s["drill_count"] for c in svc.list_categories() for s in c["scenarios"]) == \
+        sum(s["drill_count"] for c in cats for s in c["scenarios"])
     sc = svc.get_scenario(cats[-1]["scenarios"][0]["id"])
     assert sc["category_name"] == "当众表达" and sc["title"] == "临时点名发言"
     d = svc.get_drill(sc["drills"][0]["id"])
@@ -34,30 +69,32 @@ async def main():
     sid = st["session_id"]
     assert st["mock"] and st["ai"]["text"].startswith("小李")
     for _ in range(2):
-        r = await svc.run_turn(U, sid, b"\0" * 32000, "pcm", 16000)
+        r = await svc.run_turn(U, sid, SPEECH, "pcm", 16000)
         assert not r["empty"] and r["ai"]["text"]
     backdate(sid, 95)
-    det = await svc.end_session(U, sid, "finish")
+    det = await end_wait(svc, U, sid, "finish")
     assert det["status"] == "completed", det["status"]
     assert det["report"]["total_score"] > 0 and len(det["report"]["scores"]) == 4
     assert len(det["transcript"]) == 5
 
     # 2) 时长过短
     sid2 = (await svc.start_session(U, d["id"]))["session_id"]
-    await svc.run_turn(U, sid2, b"\0" * 32000, "pcm", 16000)
+    await svc.run_turn(U, sid2, SPEECH, "pcm", 16000)
     backdate(sid2, 32)
-    det2 = await svc.end_session(U, sid2, "finish")
+    det2 = await end_wait(svc, U, sid2, "finish")
     assert det2["status"] == "too_short" and det2["report"] is None
     assert det2["summary_line"] == report.TOO_SHORT_TEXT
 
     # 3) 主动放弃
     sid3 = (await svc.start_session(U, d["id"]))["session_id"]
-    det3 = await svc.end_session(U, sid3, "exit")
+    det3 = await end_wait(svc, U, sid3, "exit")
     assert det3["status"] == "abandoned"
 
     # 4) 空音频不计入
     sid4 = (await svc.start_session(U, d["id"]))["session_id"]
     assert (await svc.run_turn(U, sid4, b"", "pcm", 16000))["empty"]
+    silent = await svc.run_turn(U, sid4, b"\0" * 32000, "pcm", 16000)  # 纯静音：不送识别
+    assert silent["empty"] and silent["reason"] == "no_speech"
     # 5) 过期会话自动放弃
     backdate(sid4, 3 * 3600)
     lst = svc.list_sessions(U, "all")
@@ -102,7 +139,7 @@ class FakeClient:
     async def post(self, url, json=None, data=None, files=None, headers=None):
         FakeClient.calls.append((url, json, data, files, headers))
         if url.endswith("/api/ai/chat"):
-            cap = json["capability"]
+            cap = "quality-chat" if "四个维度" in json["messages"][-1]["content"] else json["capability"]
             content = ('{"scores":{"逻辑表达":8,"语言组织":7,"应变能力":6,"情绪管理":8},"summary":"ok",'
                        '"highlights":["h"],"improvements":["i"],"detail_comment":"d"}') if cap == "quality-chat" else "那你具体说说？"
             return FakeResp(js={"choices": [{"message": {"content": content}}]})
@@ -121,10 +158,10 @@ async def gateway_payload_test(d):
     gateway._client = lambda: FakeClient()
     st = await svc.start_session("gw", d["id"])
     assert st["ai"]["audio_url"].startswith("/media/audio/") and st["provider"] == "pipeline"
-    r = await svc.run_turn("gw", st["session_id"], b"\0" * 32000, "pcm", 16000)
+    r = await svc.run_turn("gw", st["session_id"], SPEECH, "pcm", 16000)
     assert r["user_text"] == "我觉得要加强跟进" and r["ai"]["text"] == "那你具体说说？"
     backdate(st["session_id"], 120)
-    det = await svc.end_session("gw", st["session_id"], "finish")
+    det = await end_wait(svc, "gw", st["session_id"], "finish")
     assert det["status"] == "completed" and det["report"]["summary"] == "ok", det
     urls = [c[0] for c in FakeClient.calls]
     assert urls == ["http://gw/api/ai/tts", "http://gw/api/ai/transcribe", "http://gw/api/ai/chat",
@@ -132,7 +169,8 @@ async def gateway_payload_test(d):
     tr = FakeClient.calls[1]
     assert tr[2]["capability"] == "speech" and tr[2]["language"] == "zh" and tr[3]["file"][0] == "audio.wav"
     assert tr[4]["Authorization"] == "Bearer aam_test"
-    assert FakeClient.calls[2][1]["capability"] == "fast-chat" and FakeClient.calls[4][1]["capability"] == "quality-chat"
+    assert FakeClient.calls[2][1]["capability"] == "fast-chat"
+    assert FakeClient.calls[4][1]["capability"] == "fast-chat"  # 只有 1 句的短训练，报告也用 fast-chat
     assert FakeClient.calls[0][1]["responseFormat"] == "mp3"
     # 错误码提示
     gateway._client = lambda: type("C", (FakeClient,), {"post": lambda self, *a, **k: _err()})()

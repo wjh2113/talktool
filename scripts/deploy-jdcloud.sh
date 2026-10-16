@@ -68,6 +68,10 @@ if [[ ! -f "\${REMOTE_DIR}/backend/.env" ]]; then
 fi
 sudo chown -R ubuntu:ubuntu "\${REMOTE_DIR}"
 chmod 600 "\${REMOTE_DIR}/backend/.env"
+# nginx 要能直接读语音文件：放行目录路径（只读），数据库等文件仍是 ubuntu 私有
+mkdir -p "\${REMOTE_DIR}/backend/data/audio"
+sudo chmod o+x /opt "\${REMOTE_DIR}" "\${REMOTE_DIR}/backend" "\${REMOTE_DIR}/backend/data"
+chmod o+rx "\${REMOTE_DIR}/backend/data/audio"
 
 python3 - <<'PY'
 from pathlib import Path

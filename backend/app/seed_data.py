@@ -1,4 +1,4 @@
-"""种子数据：8 个分类 / 21 个场景大类 / 每个大类 1 张训练卡片。
+"""种子数据（第一批）：8 个分类 / 21 个场景大类 / 每个大类 1 张训练卡片。第二批见 seed_more.py。
 
 结构：CATEGORIES = [ {name, scenarios: [ {title, subtitle, drills: [ {...} ]} ]} ]
 drill 字段：

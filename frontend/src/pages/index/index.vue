@@ -22,7 +22,7 @@
     <view class="card quick" @tap="goScenes">
       <view>
         <text class="quick-title">开始训练</text>
-        <text class="quick-sub">8 大分类 · 21 个场景，选一个开练</text>
+        <text class="quick-sub">{{ countText }}</text>
       </view>
       <text class="chevron">›</text>
     </view>
@@ -63,13 +63,17 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import { api } from '../../utils/api'
 import { coverStyle } from '../../utils/format'
 
 const stats = ref({ total: 0, minutes: 0, avg_score: null, notes: 0 })
 const picks = ref([])
+const counts = ref({ cats: 0, drills: 0 })
+const countText = computed(() =>
+  counts.value.cats ? `${counts.value.cats} 大分类 · ${counts.value.drills} 个场景，选一个开练` : '选一个场景开练'
+)
 const PICK_TITLES = ['临时点名发言', '自我介绍', '平息客户怒火', '争取利益']
 
 async function load() {
@@ -78,6 +82,7 @@ async function load() {
   const cats = await api.categories()
   const all = []
   cats.forEach((c) => c.scenarios.forEach((s) => all.push({ ...s, category: c.name })))
+  counts.value = { cats: cats.length, drills: all.reduce((n, s) => n + (s.drill_count || 0), 0) }
   picks.value = PICK_TITLES.map((t) => all.find((s) => s.title === t)).filter(Boolean)
 }
 

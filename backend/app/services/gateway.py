@@ -5,6 +5,8 @@
   POST {base}/api/ai/transcribe   capability=speech（multipart file）   语音识别
   POST {base}/api/ai/tts          capability=tts（返回二进制 mp3）        语音合成
 """
+import asyncio
+import hashlib
 import json
 import logging
 import re
@@ -47,6 +49,37 @@ def _client():
     return httpx.AsyncClient(timeout=config.GATEWAY_TIMEOUT)
 
 
+RETRY_STATUS = (429, 502, 503, 504)
+RETRY_WAIT_SEC = 3  # 网关建议：429/502 等 3~5 秒再试一次
+
+
+def idem_key(*parts) -> str:
+    """幂等键：同一租户同一 key 的成功响应会被网关回放，不重复扣积分。"""
+    raw = "|".join(str(p) for p in parts)
+    return "tt-" + hashlib.sha1(raw.encode("utf-8")).hexdigest()[:32]
+
+
+async def _post(url: str, what: str, idempotent: bool, **kw):
+    """POST 一次；带幂等键的请求遇到网络错误或 429/5xx 时等几秒重试一次（重试不会重复扣费）。"""
+    attempts = 2 if idempotent else 1
+    for i in range(attempts):
+        try:
+            async with _client() as c:
+                resp = await c.post(url, **kw)
+        except Exception as e:  # noqa: BLE001  网络异常
+            if i + 1 < attempts:
+                log.warning("%s 网络异常，%ss 后重试：%s", what, RETRY_WAIT_SEC, e)
+                await asyncio.sleep(RETRY_WAIT_SEC)
+                continue
+            raise GatewayError(f"{what}失败：网络异常 {e}") from e
+        if resp.status_code in RETRY_STATUS and i + 1 < attempts:
+            log.warning("%s HTTP %s，%ss 后重试", what, resp.status_code, RETRY_WAIT_SEC)
+            await asyncio.sleep(RETRY_WAIT_SEC)
+            continue
+        _check(resp, what)
+        return resp
+
+
 def _check(resp, what: str):
     if resp.status_code >= 400:
         hint = ERROR_HINTS.get(resp.status_code, "")
@@ -59,7 +92,8 @@ def _check(resp, what: str):
 
 
 async def chat(messages: list, capability: str = None, temperature: float = None,
-               max_tokens: int = 400, user_id: str = None) -> str:
+               max_tokens: int = 400, user_id: str = None, idempotency_key: str = None,
+               max_cost: float = None) -> str:
     payload = {
         **_common(),
         "capability": capability or config.LLM_CAPABILITY,
@@ -70,9 +104,12 @@ async def chat(messages: list, capability: str = None, temperature: float = None
     }
     if user_id:
         payload["userId"] = user_id
-    async with _client() as c:
-        resp = await c.post(f"{config.GATEWAY_BASE_URL}/api/ai/chat", json=payload, headers=_headers())
-    _check(resp, "对话")
+    if idempotency_key:
+        payload["idempotencyKey"] = idempotency_key
+    if max_cost:
+        payload["maxCostCny"] = max_cost
+    resp = await _post(f"{config.GATEWAY_BASE_URL}/api/ai/chat", "对话", bool(idempotency_key),
+                       json=payload, headers=_headers())
     data = resp.json()
     try:
         return (data["choices"][0]["message"]["content"] or "").strip()
@@ -80,16 +117,17 @@ async def chat(messages: list, capability: str = None, temperature: float = None
         raise GatewayError(f"对话返回格式异常: {json.dumps(data, ensure_ascii=False)[:300]}") from e
 
 
-async def transcribe(audio: bytes, filename: str = "audio.wav", mime: str = "audio/wav") -> str:
+async def transcribe(audio: bytes, filename: str = "audio.wav", mime: str = "audio/wav",
+                     idempotency_key: str = None) -> str:
     data = {**{k: str(v).lower() if isinstance(v, bool) else v for k, v in _common().items()},
             "capability": config.ASR_CAPABILITY}
     if config.ASR_LANGUAGE:
         data["language"] = config.ASR_LANGUAGE
+    if idempotency_key:
+        data["idempotencyKey"] = idempotency_key
     files = {"file": (filename, audio, mime)}
-    async with _client() as c:
-        resp = await c.post(f"{config.GATEWAY_BASE_URL}/api/ai/transcribe",
-                            data=data, files=files, headers=_headers(json_body=False))
-    _check(resp, "语音识别")
+    resp = await _post(f"{config.GATEWAY_BASE_URL}/api/ai/transcribe", "语音识别", bool(idempotency_key),
+                       data=data, files=files, headers=_headers(json_body=False))
     try:
         return (resp.json().get("text") or "").strip()
     except ValueError:
