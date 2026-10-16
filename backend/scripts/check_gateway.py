@@ -50,7 +50,7 @@ show("health", s, ms, b[:80].decode(errors="ignore"))
 s, b, h, ms = call("/api/ai/capabilities", method="GET")
 caps = [x.get("name") for x in json.loads(b).get("data", [])] if s < 400 else []
 show("capabilities", s, ms, ", ".join(caps) or b[:200].decode(errors="ignore"))
-for need in ("fast-chat", "quality-chat", "speech", "tts"):
+for need in ("fast-chat", "quality-chat", "speech", "tts", "pronunciation"):
     if caps and need not in caps:
         print(f"   ⚠️  租户未开通能力 {need}，请让管理员在「租户配额 → 能力」勾选")
 
@@ -75,3 +75,14 @@ if s < 400:
     parts.append(f"--{boundary}--\r\n".encode())
     s, b, h, ms = call("/api/ai/transcribe", raw=b"".join(parts), ctype=f"multipart/form-data; boundary={boundary}")
     show("speech", s, ms, json.loads(b).get("text") if s < 400 else b[:200].decode(errors="ignore"))
+
+    # 发音评测：用同一段合成音频对照原稿打分
+    parts = []
+    for k, v in {"capability": "pronunciation", "language": "zh", "text": "你好，我们开始今天的训练吧。",
+                 "dataClass": "internal", "fallback": "true"}.items():
+        parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode())
+    parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="t.mp3"\r\n'
+                 f'Content-Type: audio/mpeg\r\n\r\n'.encode() + audio + b"\r\n")
+    parts.append(f"--{boundary}--\r\n".encode())
+    s, b, h, ms = call("/api/ai/pronounce", raw=b"".join(parts), ctype=f"multipart/form-data; boundary={boundary}")
+    show("pronunciation", s, ms, f"score={json.loads(b).get('score')}" if s < 400 else b[:200].decode(errors="ignore"))

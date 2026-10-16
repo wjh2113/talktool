@@ -17,12 +17,17 @@ talktool/
 │   │       ├── voice.py     语音对话服务：方案B 已实现，方案A 预留，Mock
 │   │       ├── prompts.py   场景 System Prompt 模板 + 报告 Prompt
 │   │       ├── report.py    报告生成 + too_short / abandoned 边界规则
-│   │       └── sessions.py  业务逻辑（与框架无关）
+│   │       ├── sessions.py  训练会话 / 报告 / 记录（与框架无关）
+│   │       ├── metrics.py   表达数据：语速、口头禅、停顿、反应时间
+│   │       ├── practice.py  跟读：示范稿 + 发音评测
+│   │       └── library.py   练习本 + 自定义场景
 │   ├── scripts/check_gateway.py   网关连通性自检
-│   └── tests/test_flow.py         全流程测试（Mock + 模拟网关）
+│   └── tests/                     test_flow.py 全流程 · test_features.py 新功能 + 旧库升级
 └── frontend/                uni-app (Vue3)：H5 + 微信小程序
     └── src/
-        ├── pages/           scenes(P1) scenario(P2) drill(P3) train(P4) report(P5) records(P6) + 首页/练习本/我的
+        ├── pages/           scenes(P1) scenario(P2) drill(P3) train(P4) report(P5) records(P6)
+        │                    + 首页 / 练习本 / 我的 / readalong 跟读 / custom 自定义场景
+        ├── components/ReadAloud   听示范 + 跟读打分（报告、练习本、跟读页共用）
         └── utils/voice.js   录音 + VAD + 播放（H5 / 小程序双端）
 ```
 
@@ -41,7 +46,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 - 首次启动自动建库（`backend/data/talktool.db`）并写入 21 个场景。重置场景：`python3 -m app.db --reseed`
 - 接口文档：http://127.0.0.1:8000/docs
 - `.env` 里 `GATEWAY_API_KEY` 留空 = **Mock 模式**：不调网关，可走通全部页面和报告（AI 用固定台词）
-- 测试：`python3 -m tests.test_flow`
+- 测试：`python3 -m tests.test_flow && python3 -m tests.test_features`
 
 ## 2. 启动前端
 
@@ -64,8 +69,10 @@ npm run dev:mp-weixin     # 用微信开发者工具导入 frontend/dist/dev/mp-
 | 训练报告 | `POST /api/ai/chat` | `quality-chat` |
 | 语音识别 | `POST /api/ai/transcribe`（multipart，WAV 16k） | `speech` |
 | 语音合成 | `POST /api/ai/tts`（mp3） | `tts` |
+| 跟读打分 | `POST /api/ai/pronounce` | `pronunciation` |
+| 自定义场景 / 示范稿 | `POST /api/ai/chat` | `quality-chat` |
 
-Key 只在后端 `.env`，前端拿不到。租户要在网关「租户配额 → 能力」里开通这 4 个能力；如果开了 IP 白名单，记得加上服务器出口 IP。音色在 `.env` 的 `TTS_VOICE` 里改。
+Key 只在后端 `.env`，前端拿不到。租户要在网关「租户配额 → 能力」里开通这 5 个能力（含 `pronunciation`）；如果开了 IP 白名单，记得加上服务器出口 IP。音色在 `.env` 的 `TTS_VOICE` 里改。
 
 ## 4. 一轮对话怎么跑
 
@@ -87,6 +94,19 @@ AI 讲话中（播放 TTS） → 可以说话（自动开麦） → 用户讲话
 
 `backend/app/services/voice.py` 里的 `RealtimeVoiceProvider` 是预留位，注释写了接入步骤：前端改为 WebSocket 推 16k PCM 帧，后端中继到实时语音 API，转写文本照样写进 transcript。会话、计时、报告逻辑不用改。设置 `VOICE_PROVIDER=realtime` 启用。
 
-## 6. MVP 未做
+## 6. 练习闭环功能
 
-登录（目前用设备 ID 区分用户）、练习本（Tab 占位）、支付、分享、排行榜、场景管理后台（改 `seed_data.py` 后执行 `--reseed`）。
+| 功能 | 入口 | 说明 |
+|---|---|---|
+| 逐句复盘 + 示范 | 训练报告 → 逐句复盘 | 报告对用户每句话给出“更好的说法”和一句点拨，可听示范、跟读打分 |
+| 练习本 | 底部 Tab「练习本」 | 报告里 ☆ 收藏话术/建议、跟读页收藏示范稿；可反复跟读，记录最高分 |
+| 进步对比 | 训练报告 | 同一场景上次的总分和四维分对比（↑/↓），场景页显示练习次数与最高分 |
+| 表达数据 | 训练报告 → 表达数据 | 语速（字/分）、开口反应时间、口头禅次数与高频词、≥0.8 秒的长停顿；后端从录音直接计算，不调大模型，也会喂给报告点评 |
+| 跟读模式 | 场景介绍页「跟读示范」 | AI 为场景写一段示范稿（缓存），先听后读，网关 `pronunciation` 打分并标出没念准的句子 |
+| 自定义场景 | 首页 / 我的 → 自定义场景 | 用户描述真实情况 + 选对方态度，AI 生成角色、背景、开场白，马上可以练；只对本人可见，每人最多 30 个 |
+
+**升级已部署的服务**：直接重新部署即可。后端启动时会自动给旧库补列、建 `note` 表、建“我的场景”系统分类，原有训练记录不受影响。部署前在网关给 talktool 租户勾选 `pronunciation` 能力，然后在 backend 目录跑一下 `python3 scripts/check_gateway.py`。
+
+## 7. MVP 未做
+
+登录（目前用设备 ID 区分用户）、支付、分享、排行榜、场景管理后台（改 `seed_data.py` 后执行 `--reseed`）。

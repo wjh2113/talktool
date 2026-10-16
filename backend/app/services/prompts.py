@@ -27,11 +27,14 @@ def build_system_prompt(drill: dict) -> str:
 5. 如果用户的话明显没听清或很短，用角色口吻追问一句即可。"""
 
 
-def build_report_messages(drill: dict, transcript: list, duration_sec: int) -> list:
-    lines = []
+def build_report_messages(drill: dict, transcript: list, duration_sec: int, metrics_text: str = "") -> list:
+    lines, n = [], 0
     for t in transcript:
-        who = "对方(AI)" if t["role"] == "ai" else "用户"
-        lines.append(f"{who}：{t['text']}")
+        if t["role"] == "ai":
+            lines.append(f"对方(AI)：{t['text']}")
+        else:
+            n += 1
+            lines.append(f"用户[第{n}句]：{t['text']}")
     dims = "、".join(SCORE_DIMENSIONS)
     scores_example = ", ".join(f'"{d}": 7' for d in SCORE_DIMENSIONS)
     system = "你是一名资深的沟通表达教练，擅长根据对话记录给出专业、具体、可执行的反馈。只输出 JSON。"
@@ -44,6 +47,7 @@ def build_report_messages(drill: dict, transcript: list, duration_sec: int) -> l
 【压力等级】{drill['pressure_level']}
 【训练目标】{drill['training_goal']}
 【训练时长】{duration_sec} 秒
+【表达数据】{metrics_text or '（无）'}
 
 【对话记录】
 {chr(10).join(lines)}
@@ -51,10 +55,39 @@ def build_report_messages(drill: dict, transcript: list, duration_sec: int) -> l
 评估要求：
 - 只评价“用户”的发言，从 {dims} 四个维度各打 1-10 分（整数），要严格、有区分度。
 - highlights：2-3 条做得好的点，要引用或指向用户的具体说法。
-- improvements：2-3 条改进建议，要具体到“可以怎么说”，最好给出示范话术。
-- detail_comment：用 Markdown 写详细点评（150-300 字），包含一段“参考示范”。
+- improvements：2-3 条改进建议，要具体到“可以怎么说”。
+- turn_reviews：对用户的每一句（共 {n} 句）给出复盘：turn 为句子序号；better 是在同样情境下更好的说法
+  （口语化、可以直接照着说，不超过 80 字）；tip 用一句话说明改在哪里（不超过 25 字）。
+- detail_comment：用 Markdown 写详细点评（150-300 字），可结合表达数据（语速、口头禅、停顿）给建议。
 - summary：一句话总评（不超过 30 字）。
 
 严格按以下 JSON 结构输出，不要输出任何其他内容：
-{{"scores": {{{scores_example}}}, "summary": "...", "highlights": ["..."], "improvements": ["..."], "detail_comment": "..."}}"""
+{{"scores": {{{scores_example}}}, "summary": "...", "highlights": ["..."], "improvements": ["..."],
+"turn_reviews": [{{"turn": 1, "better": "...", "tip": "..."}}], "detail_comment": "..."}}"""
+    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+
+def build_custom_drill_messages(description: str, pressure: str) -> list:
+    system = ("你是沟通训练课程设计师，把用户描述的真实沟通情境改写成一个可以和 AI 语音对练的角色扮演场景。只输出 JSON。"
+              "如果描述涉及违法、伤害他人、色情或与沟通训练无关的内容，输出 {\"error\": \"原因\"}。")
+    user = f"""用户描述：{description}
+压力等级：{pressure}（{PRESSURE_STYLE.get(pressure, PRESSURE_STYLE['中压'])}）
+
+请输出 JSON：
+{{"title": "训练标题（12-24 字，概括情境与目标）",
+  "description": "场景描述（120-220 字，第二人称“你是……”，包含你的角色、背景、对方如何开场、你的训练任务）",
+  "ai_role": "AI 扮演的角色（含身份、性格、态度，30 字内）",
+  "user_role": "用户的角色（15 字内）",
+  "training_goal": "训练目标（考察的 2-3 个能力点，30 字内）",
+  "opening_line": "AI 角色的第一句话（口语化，符合压力等级，40 字内）",
+  "duration_min": 3}}"""
+    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+
+def build_script_messages(drill: dict) -> list:
+    system = "你是沟通表达教练，为训练场景写一段可以直接照着朗读练习的示范稿。只输出示范稿正文，不要标题和解释。"
+    user = f"""【场景描述】{drill['description']}
+【用户角色】{drill['user_role']}
+【训练目标】{drill['training_goal']}
+请以用户角色的口吻写一段示范发言：口语化、结构清晰（先表态再展开），120-200 字，适合朗读，不用括号和列表。"""
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]

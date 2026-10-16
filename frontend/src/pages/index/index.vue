@@ -27,6 +27,17 @@
       <text class="chevron">›</text>
     </view>
 
+    <view class="duo">
+      <view class="card mini" @tap="goCustom">
+        <text class="mini-title">自定义场景</text>
+        <text class="mini-sub">说说你的真实情况，AI 生成专属训练</text>
+      </view>
+      <view class="card mini" @tap="goNotebook">
+        <text class="mini-title">练习本<text v-if="stats.notes" class="mini-count"> {{ stats.notes }}</text></text>
+        <text class="mini-sub">收藏的话术，随时跟读</text>
+      </view>
+    </view>
+
     <view class="sec-head">
       <text class="sec-title">推荐练习</text>
     </view>
@@ -57,7 +68,7 @@ import { onShow } from '@dcloudio/uni-app'
 import { api } from '../../utils/api'
 import { coverStyle } from '../../utils/format'
 
-const stats = ref({ total: 0, minutes: 0, avg_score: null })
+const stats = ref({ total: 0, minutes: 0, avg_score: null, notes: 0 })
 const picks = ref([])
 const PICK_TITLES = ['临时点名发言', '自我介绍', '平息客户怒火', '争取利益']
 
@@ -71,6 +82,8 @@ async function load() {
 }
 
 const goScenes = () => uni.switchTab({ url: '/pages/scenes/scenes' })
+const goCustom = () => uni.navigateTo({ url: '/pages/custom/custom' })
+const goNotebook = () => uni.switchTab({ url: '/pages/notebook/notebook' })
 const goRecords = () => uni.navigateTo({ url: '/pages/records/records' })
 const openScenario = (s) => uni.navigateTo({ url: `/pages/scenario/scenario?id=${s.id}` })
 
@@ -99,6 +112,11 @@ onShow(load)
 .quick-title { font-size: 34rpx; font-weight: 700; margin-bottom: 10rpx; }
 .quick-sub { font-size: 26rpx; color: $tt-text-2; }
 .records { margin-top: 12rpx; }
+.duo { display: flex; gap: 20rpx; margin-bottom: 28rpx; }
+.mini { flex: 1; padding: 30rpx 28rpx; display: flex; flex-direction: column; }
+.mini-title { font-size: 30rpx; font-weight: 700; margin-bottom: 10rpx; }
+.mini-count { color: $tt-primary; }
+.mini-sub { font-size: 24rpx; color: $tt-text-2; line-height: 1.5; }
 .sec-head { padding: 16rpx 4rpx 24rpx; }
 .sec-title { font-size: 32rpx; font-weight: 700; }
 .pick { display: flex; align-items: center; padding: 28rpx; margin-bottom: 20rpx; }

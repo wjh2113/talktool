@@ -4,7 +4,8 @@
 CREATE TABLE IF NOT EXISTS category (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     name        TEXT    NOT NULL UNIQUE,
-    sort_order  INTEGER NOT NULL DEFAULT 0
+    sort_order  INTEGER NOT NULL DEFAULT 0,
+    is_system   INTEGER NOT NULL DEFAULT 0       -- 1 = 系统分类（如“我的场景”），不在场景页展示
 );
 
 -- 场景大类（如“临时点名发言”）
@@ -33,7 +34,9 @@ CREATE TABLE IF NOT EXISTS drill (
     opening_line    TEXT    NOT NULL DEFAULT '',   -- AI 开场白；为空则由 LLM 生成
     system_prompt   TEXT    NOT NULL DEFAULT '',   -- 自定义 system prompt；为空则按模板生成
     status          TEXT    NOT NULL DEFAULT 'online' CHECK (status IN ('online','offline')),
-    sort_order      INTEGER NOT NULL DEFAULT 0
+    sort_order      INTEGER NOT NULL DEFAULT 0,
+    owner_id        TEXT,                          -- NULL = 公共场景；否则为用户自定义场景
+    sample_script   TEXT    NOT NULL DEFAULT ''    -- 跟读示范稿（首次请求时由 LLM 生成并缓存）
 );
 CREATE INDEX IF NOT EXISTS idx_drill_scenario ON drill(scenario_id);
 
@@ -47,7 +50,8 @@ CREATE TABLE IF NOT EXISTS session (
     duration_sec  INTEGER NOT NULL DEFAULT 0,
     status        TEXT    NOT NULL DEFAULT 'in_progress'
                   CHECK (status IN ('in_progress','completed','too_short','abandoned')),
-    transcript    TEXT    NOT NULL DEFAULT '[]'    -- JSON: [{role:'ai'|'user', text, at}]
+    transcript    TEXT    NOT NULL DEFAULT '[]',   -- JSON: [{role:'ai'|'user', text, at, metrics?}]
+    metrics       TEXT    NOT NULL DEFAULT '{}'    -- JSON: 表达数据汇总（语速/口头禅/停顿/反应时间）
 );
 CREATE INDEX IF NOT EXISTS idx_session_user ON session(user_id, started_at DESC);
 
@@ -61,5 +65,20 @@ CREATE TABLE IF NOT EXISTS report (
     highlights      TEXT    NOT NULL DEFAULT '[]', -- JSON array
     improvements    TEXT    NOT NULL DEFAULT '[]', -- JSON array
     detail_comment  TEXT    NOT NULL DEFAULT '',   -- Markdown
+    turn_reviews    TEXT    NOT NULL DEFAULT '[]', -- JSON: [{turn, user_text, better, tip}] 逐句示范
     created_at      TEXT    NOT NULL
 );
+
+-- 练习本：收藏的话术 / 建议 / 示范稿
+CREATE TABLE IF NOT EXISTS note (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id      TEXT    NOT NULL,
+    kind         TEXT    NOT NULL DEFAULT 'phrase' CHECK (kind IN ('phrase','tip','script')),
+    text         TEXT    NOT NULL,
+    source_text  TEXT    NOT NULL DEFAULT '',     -- 原话（话术类）
+    drill_id     INTEGER REFERENCES drill(id),
+    session_id   INTEGER REFERENCES session(id) ON DELETE SET NULL,
+    best_score   INTEGER,                         -- 跟读最高分
+    created_at   TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_note_user ON note(user_id, created_at DESC);

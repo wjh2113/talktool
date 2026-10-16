@@ -15,7 +15,10 @@
         <text class="rec-title ellipsis-2">{{ it.drill_title }}</text>
         <text class="badge" :class="it.status">{{ statusText(it) }}</text>
       </view>
-      <text class="tag pressure">{{ it.pressure_level }}</text>
+      <view class="tags">
+        <text class="tag">{{ it.pressure_level }}</text>
+        <text v-if="it.is_custom" class="tag tag-gray">自定义</text>
+      </view>
       <view class="rec-meta">
         <text>{{ it.started_at }}</text>
         <text v-if="it.status !== 'abandoned'" class="gap">训练 {{ durationText(it.duration_sec) }}</text>
@@ -115,7 +118,7 @@ onReachBottom(() => { if (hasMore.value) load(false) })
   &.completed { background: $tt-tag-bg; color: $tt-primary; }
   &.in_progress { background: #FFF4E5; color: #E68A1A; }
 }
-.pressure { margin-bottom: 22rpx; }
+.tags { display: flex; gap: 14rpx; margin-bottom: 22rpx; }
 .rec-meta { font-size: 26rpx; color: $tt-text-3; display: flex; }
 .gap { margin-left: 28rpx; }
 .divider { height: 1rpx; background: #EEF1F5; margin: 26rpx 0 22rpx; }

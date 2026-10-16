@@ -1,5 +1,6 @@
 """FastAPI 入口。启动：uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"""
 import logging
+from typing import Optional
 
 from fastapi import FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,6 +10,7 @@ from pydantic import BaseModel
 
 from . import config
 from .db import init_db
+from .services import library, practice
 from .services import sessions as svc
 from .services.gateway import GatewayError
 
@@ -73,8 +75,14 @@ def scenario(scenario_id: int):
 
 
 @app.get("/api/drills/{drill_id}")
-def drill(drill_id: int):
-    return svc.get_drill(drill_id)
+def drill(drill_id: int, x_user_id: str = Header(None)):
+    return svc.get_drill(drill_id, uid(x_user_id))
+
+
+@app.get("/api/drills/{drill_id}/script")
+async def drill_script(drill_id: int, x_user_id: str = Header(None)):
+    """跟读模式：场景示范稿"""
+    return await practice.drill_script(uid(x_user_id), drill_id)
 
 
 # ---------------- 训练会话 ----------------
@@ -126,6 +134,77 @@ def records(range: str = Query("all", pattern="^(all|week|month)$"),
 @app.get("/api/sessions/{session_id}")
 def session_detail(session_id: int, x_user_id: str = Header(None)):
     return svc.get_session_detail(uid(x_user_id), session_id)
+
+
+# ---------------- 跟读 / 示范朗读 ----------------
+
+class TtsIn(BaseModel):
+    text: str
+
+
+@app.post("/api/tts")
+async def tts(body: TtsIn):
+    return await svc.tts(body.text)
+
+
+@app.post("/api/pronounce")
+async def pronounce(audio: UploadFile = File(...),
+                    text: str = Form(...),
+                    format: str = Form("wav"),
+                    sample_rate: int = Form(16000),
+                    note_id: Optional[int] = Form(None),
+                    x_user_id: str = Header(None)):
+    data = await audio.read()
+    if len(data) > 25 * 1024 * 1024:
+        raise HTTPException(413, "音频过大")
+    return await practice.pronounce(uid(x_user_id), data, format, sample_rate, text, note_id)
+
+
+# ---------------- 练习本 ----------------
+
+class NoteIn(BaseModel):
+    kind: str = "phrase"   # phrase 话术 | tip 建议 | script 示范稿
+    text: str
+    source_text: str = ""
+    drill_id: Optional[int] = None
+    session_id: Optional[int] = None
+
+
+@app.get("/api/notes")
+def notes(kind: str = None, x_user_id: str = Header(None)):
+    return library.list_notes(uid(x_user_id), kind)
+
+
+@app.post("/api/notes")
+def add_note(body: NoteIn, x_user_id: str = Header(None)):
+    return library.add_note(uid(x_user_id), body.kind, body.text, body.source_text, body.drill_id, body.session_id)
+
+
+@app.delete("/api/notes/{note_id}")
+def delete_note(note_id: int, x_user_id: str = Header(None)):
+    return library.delete_note(uid(x_user_id), note_id)
+
+
+# ---------------- 自定义场景 ----------------
+
+class CustomIn(BaseModel):
+    description: str
+    pressure_level: str = "中压"
+
+
+@app.get("/api/custom-drills")
+def custom_drills(x_user_id: str = Header(None)):
+    return library.list_custom_drills(uid(x_user_id))
+
+
+@app.post("/api/custom-drills")
+async def create_custom(body: CustomIn, x_user_id: str = Header(None)):
+    return await library.create_custom_drill(uid(x_user_id), body.description, body.pressure_level)
+
+
+@app.delete("/api/custom-drills/{drill_id}")
+def delete_custom(drill_id: int, x_user_id: str = Header(None)):
+    return library.delete_custom_drill(uid(x_user_id), drill_id)
 
 
 @app.get("/api/stats")

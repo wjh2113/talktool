@@ -13,7 +13,7 @@
         <view class="back" />
       </view>
       <view class="hero-text">
-        <text class="hero-cat">{{ d.scenario_title }}</text>
+        <text class="hero-cat">{{ d.is_custom ? '我的自定义场景' : d.scenario_title }}</text>
         <text class="hero-title">{{ d.title }}</text>
       </view>
     </view>
@@ -42,10 +42,12 @@
     <view class="card desc goal">
       <text>{{ d.training_goal }}</text>
       <text class="muted role">你的角色：{{ d.user_role }}</text>
+      <text v-if="d.my_times" class="muted role">已练 {{ d.my_times }} 次{{ d.my_best != null ? ' · 最高 ' + d.my_best + ' 分' : '' }}</text>
     </view>
 
     <view class="footer">
-      <view class="btn-primary" @tap="start">开始训练</view>
+      <view class="btn-plain read" @tap="readAlong">跟读示范</view>
+      <view class="btn-primary go" @tap="start">开始训练</view>
     </view>
   </view>
 </template>
@@ -62,6 +64,10 @@ const statusBar = ref(uni.getSystemInfoSync().statusBarHeight || 20)
 
 function back() {
   uni.navigateBack({ fail: () => uni.switchTab({ url: '/pages/scenes/scenes' }) })
+}
+
+function readAlong() {
+  uni.navigateTo({ url: `/pages/readalong/readalong?drillId=${d.value.id}` })
 }
 
 function start() {
@@ -127,7 +133,11 @@ onLoad(async (q) => {
 }
 .goal { display: flex; flex-direction: column; }
 .role { margin-top: 16rpx; }
+.footer .read { width: 230rpx; flex-shrink: 0; }
+.footer .go { flex: 1; }
 .footer {
+  display: flex;
+  gap: 20rpx;
   position: fixed;
   left: 0;
   right: 0;

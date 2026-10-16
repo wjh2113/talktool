@@ -30,7 +30,28 @@ def _clamp_score(v) -> int:
         return 5
 
 
-def normalize_report(raw: dict) -> dict:
+def _user_texts(transcript: list) -> list:
+    return [t["text"] for t in transcript or [] if t.get("role") == "user"]
+
+
+def normalize_turn_reviews(raw_list, transcript: list) -> list:
+    """把 LLM 给的逐句复盘对齐到用户的每一句原话。"""
+    users = _user_texts(transcript)
+    by_turn = {}
+    for i, item in enumerate(raw_list if isinstance(raw_list, list) else []):
+        if not isinstance(item, dict):
+            continue
+        try:
+            turn = int(item.get("turn") or i + 1)
+        except (TypeError, ValueError):
+            turn = i + 1
+        better = str(item.get("better") or "").strip()
+        if better and 1 <= turn <= len(users):
+            by_turn.setdefault(turn, {"better": better[:200], "tip": str(item.get("tip") or "").strip()[:60]})
+    return [{"turn": n, "user_text": users[n - 1], **v} for n, v in sorted(by_turn.items())]
+
+
+def normalize_report(raw: dict, transcript: list = None) -> dict:
     scores_in = raw.get("scores") or {}
     scores = {d: _clamp_score(scores_in.get(d)) for d in SCORE_DIMENSIONS}
     as_list = lambda v: [str(x) for x in v] if isinstance(v, list) else ([str(v)] if v else [])
@@ -41,11 +62,15 @@ def normalize_report(raw: dict) -> dict:
         "highlights": as_list(raw.get("highlights"))[:5],
         "improvements": as_list(raw.get("improvements"))[:5],
         "detail_comment": str(raw.get("detail_comment") or "").strip(),
+        "turn_reviews": normalize_turn_reviews(raw.get("turn_reviews"), transcript),
     }
 
 
 def mock_report(transcript: list) -> dict:
+    reviews = [{"turn": i + 1, "better": "我的看法有两点：第一，首次拜访用统一的需求清单把客户痛点问清楚；第二，每周复盘一次丢单原因。",
+                "tip": "先给结论，再分点展开"} for i in range(len(_user_texts(transcript)))]
     return normalize_report({
+        "turn_reviews": reviews,
         "scores": {"逻辑表达": 7, "语言组织": 6, "应变能力": 7, "情绪管理": 8},
         "summary": "（Mock 报告）表态及时，展开还可以更有条理",
         "highlights": ["被点名后能第一时间表态，没有冷场", "能结合自己接触客户的经验来谈"],
@@ -56,12 +81,12 @@ def mock_report(transcript: list) -> dict:
         "detail_comment": "**整体表现**：回应及时、态度积极。\n\n**参考示范**：“谢谢王总。我的看法是转化率卡在需求挖掘这一步。"
                           "建议有两点：第一，首次拜访用统一的需求清单；第二，每周复盘丢单原因。上季度我按这个方法跟进的 5 个客户成交了 3 个。”\n\n"
                           "> 这是 Mock 模式下的示例报告，配置网关 Key 后会由大模型根据真实对话生成。",
-    })
+    }, transcript)
 
 
-async def generate_report(drill: dict, transcript: list, duration_sec: int) -> dict:
+async def generate_report(drill: dict, transcript: list, duration_sec: int, metrics_text: str = "") -> dict:
     if config.MOCK:
         return mock_report(transcript)
-    msgs = build_report_messages(drill, transcript, duration_sec)
-    text = await gateway.chat(msgs, capability=config.REPORT_CAPABILITY, temperature=0.3, max_tokens=1500)
-    return normalize_report(gateway.extract_json(text))
+    msgs = build_report_messages(drill, transcript, duration_sec, metrics_text)
+    text = await gateway.chat(msgs, capability=config.REPORT_CAPABILITY, temperature=0.3, max_tokens=2500)
+    return normalize_report(gateway.extract_json(text), transcript)

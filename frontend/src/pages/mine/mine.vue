@@ -13,6 +13,10 @@
         <text>训练记录</text>
         <text class="chevron">›</text>
       </view>
+      <view class="row" @tap="go('/pages/custom/custom')">
+        <text>我的自定义场景</text>
+        <text class="chevron">›</text>
+      </view>
       <view class="row">
         <text>服务状态</text>
         <text class="muted">{{ healthText }}</text>

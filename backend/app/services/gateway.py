@@ -115,6 +115,18 @@ async def speech(text: str) -> bytes:
     return resp.content
 
 
+async def pronounce(audio: bytes, text: str, filename: str = "audio.wav", mime: str = "audio/wav") -> dict:
+    """发音评测：对照稿子 text 打分。返回 {score, accuracy, transcript, issues:[{quote,note}], note}"""
+    data = {**{k: str(v).lower() if isinstance(v, bool) else v for k, v in _common().items()},
+            "capability": config.PRONOUNCE_CAPABILITY, "text": text, "language": config.ASR_LANGUAGE or "zh"}
+    files = {"file": (filename, audio, mime)}
+    async with _client() as c:
+        resp = await c.post(f"{config.GATEWAY_BASE_URL}/api/ai/pronounce",
+                            data=data, files=files, headers=_headers(json_body=False))
+    _check(resp, "发音评测")
+    return resp.json()
+
+
 async def capabilities() -> list:
     async with _client() as c:
         resp = await c.get(f"{config.GATEWAY_BASE_URL}/api/ai/capabilities", headers=_headers())

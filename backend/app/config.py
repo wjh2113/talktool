@@ -34,6 +34,8 @@ LLM_CAPABILITY = _env("LLM_CAPABILITY", "fast-chat")          # 对练回复：�
 REPORT_CAPABILITY = _env("REPORT_CAPABILITY", "quality-chat")  # 训练报告：质量优先
 ASR_CAPABILITY = _env("ASR_CAPABILITY", "speech")
 TTS_CAPABILITY = _env("TTS_CAPABILITY", "tts")
+PRONOUNCE_CAPABILITY = _env("PRONOUNCE_CAPABILITY", "pronunciation")
+CUSTOM_CAPABILITY = _env("CUSTOM_CAPABILITY", "quality-chat")    # 自定义场景生成
 LLM_TEMPERATURE = float(_env("LLM_TEMPERATURE", "0.8"))
 ASR_LANGUAGE = _env("ASR_LANGUAGE", "zh")
 TTS_VOICE = _env("TTS_VOICE", "FunAudioLLM/CosyVoice2-0.5B:alex")  # alex/anna/bella/benjamin/charles/claire/david/diana
@@ -53,6 +55,7 @@ else:
 MIN_DURATION_SEC = int(_env("MIN_DURATION_SEC", "60"))       # 少于该时长 → too_short
 MIN_USER_TURNS = int(_env("MIN_USER_TURNS", "1"))            # 用户有效发言少于该轮数 → too_short
 STALE_SESSION_MIN = int(_env("STALE_SESSION_MIN", "120"))     # 超过该时长仍未结束 → abandoned
+CUSTOM_DRILL_LIMIT = int(_env("CUSTOM_DRILL_LIMIT", "30"))    # 每个用户最多保留的自定义场景数
 
 CORS_ORIGINS = [o.strip() for o in _env("CORS_ORIGINS", "*").split(",") if o.strip()]
 

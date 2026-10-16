@@ -30,7 +30,7 @@ class Vad {
   }
   feed(rms, ms) {
     if (this.done) return
-    const C = VAD_CONFIG
+    const C = this.cb.vad ? { ...VAD_CONFIG, ...this.cb.vad } : VAD_CONFIG
     this.t += ms
     this.cb.onLevel && this.cb.onLevel(rms)
     if (this.t <= C.calibMs) { this.noise += rms; this.noiseN++; return }

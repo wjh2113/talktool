@@ -51,8 +51,11 @@ export function request(url, { method = 'GET', data, silent = false, timeout = 9
 }
 
 /** 上传一段录音。H5：PCM ArrayBuffer；小程序：录音临时文件路径 */
-export function uploadAudio(url, rec) {
+export function uploadAudio(url, rec, extra = {}) {
   const form = { format: rec.format, sample_rate: String(rec.sampleRate || 16000) }
+  Object.keys(extra).forEach((k) => {
+    if (extra[k] !== undefined && extra[k] !== null) form[k] = String(extra[k])
+  })
   // #ifdef H5
   const fd = new FormData()
   fd.append('audio', new Blob([rec.data], { type: 'application/octet-stream' }), 'audio.' + rec.format)

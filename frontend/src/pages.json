@@ -15,7 +15,8 @@
     {
       "path": "pages/notebook/notebook",
       "style": {
-        "navigationBarTitleText": "练习本"
+        "navigationBarTitleText": "练习本",
+        "enablePullDownRefresh": true
       }
     },
     {
@@ -55,6 +56,18 @@
       "style": {
         "navigationBarTitleText": "训练记录",
         "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/readalong/readalong",
+      "style": {
+        "navigationBarTitleText": "跟读模式"
+      }
+    },
+    {
+      "path": "pages/custom/custom",
+      "style": {
+        "navigationBarTitleText": "自定义场景"
       }
     }
   ],
