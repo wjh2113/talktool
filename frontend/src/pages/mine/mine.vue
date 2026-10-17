@@ -11,7 +11,7 @@
 
     <view class="card menu">
       <view v-if="user.role === 'admin'" class="row" @tap="go('/pages/admin/admin')">
-        <text>管理后台（邀请码 / 用户）</text>
+        <text>管理后台（邀请码 / 用户 / 场景导入）</text>
         <text class="chevron">›</text>
       </view>
       <view class="row" @tap="go('/pages/records/records')">
