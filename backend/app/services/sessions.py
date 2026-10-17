@@ -153,7 +153,8 @@ async def _synthesize(provider, session_id, text: str, cache: bool = False):
 
 
 def _tts_allowed(user_id: str, text: str) -> bool:
-    """只允许朗读系统生成过的内容：本人的收藏、本人报告里的逐句示范、场景示范稿、框架示例。防止被拿去合成任意文字。"""
+    """只允许朗读系统生成过的内容：本人的收藏、本人报告里的逐句示范、场景示范稿、框架示例。
+    分句预取时会传示范稿的连续子串（≥6 字），同样放行；防止被拿去合成任意文字。"""
     with get_conn() as conn:
         if conn.execute("SELECT 1 FROM note WHERE user_id = ? AND text = ?", (user_id, text)).fetchone():
             return True
@@ -170,6 +171,31 @@ def _tts_allowed(user_id: str, text: str) -> bool:
     for r in rows:
         for item in loads(r[0], None) or []:
             if isinstance(item, dict) and item.get("better") == text:
+                return True
+    # 分句朗读：连续子串（与小树学堂首句先出声一致）
+    if len(text) < 6:
+        return False
+    with get_conn() as conn:
+        if conn.execute(
+            "SELECT 1 FROM note WHERE user_id = ? AND instr(text, ?) > 0 LIMIT 1", (user_id, text)
+        ).fetchone():
+            return True
+        if conn.execute(
+            "SELECT 1 FROM drill WHERE sample_script != '' AND instr(sample_script, ?) > 0 LIMIT 1", (text,)
+        ).fetchone():
+            return True
+        if conn.execute(
+            "SELECT 1 FROM framework WHERE instr(example, ?) > 0 LIMIT 1", (text,)
+        ).fetchone():
+            return True
+        rows = conn.execute(
+            """SELECT r.turn_reviews FROM report r JOIN session s ON s.id = r.session_id
+               WHERE s.user_id = ? AND r.turn_reviews NOT IN ('[]', 'null', '')
+               ORDER BY r.id DESC LIMIT 200""", (user_id,)).fetchall()
+    for r in rows:
+        for item in loads(r[0], None) or []:
+            better = item.get("better") if isinstance(item, dict) else None
+            if isinstance(better, str) and text in better:
                 return True
     return False
 

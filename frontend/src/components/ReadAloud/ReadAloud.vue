@@ -1,8 +1,8 @@
 <template>
   <view class="ra">
     <view class="ra-actions">
-      <view class="ra-btn" :class="{ on: playing }" @tap="onListen">
-        <text>{{ playing ? '■ 停止' : '▶ 听示范' }}</text>
+      <view class="ra-btn" :class="{ on: playing || loading }" @tap="onListen">
+        <text>{{ listenLabel }}</text>
       </view>
       <view class="ra-btn primary" :class="{ rec: state === 'recording' }" @tap="onRecord">
         <text>{{ recordLabel }}</text>
@@ -31,10 +31,10 @@
 </template>
 
 <script setup>
-import { ref, computed, onUnmounted } from 'vue'
+import { ref, computed, watch, onUnmounted } from 'vue'
 import { api } from '../../utils/api'
-import { absUrl } from '../../utils/request'
-import { createRecorder, playAudio, stopAudio, unlockAudio } from '../../utils/voice'
+import { createRecorder, stopAudio, unlockAudio } from '../../utils/voice'
+import { prefetch, speakDemo, stopDemo } from '../../utils/demoTts'
 
 const props = defineProps({
   text: { type: String, required: true },
@@ -45,12 +45,16 @@ const emit = defineEmits(['scored'])
 
 const state = ref('idle') // idle | recording | scoring
 const playing = ref(false)
+const loading = ref(false)
 const result = ref(null)
 const level = ref(0)
 const bestScore = ref(props.best)
 let recorder = null
 
 const levelPct = computed(() => Math.min(100, Math.round(level.value * 600)))
+const listenLabel = computed(() =>
+  loading.value && !playing.value ? '合成中…' : playing.value || loading.value ? '■ 停止' : '▶ 听示范'
+)
 const recordLabel = computed(() =>
   state.value === 'recording' ? '■ 读完了' : state.value === 'scoring' ? '评分中…' : result.value ? '🎙 再读一遍' : '🎙 跟读'
 )
@@ -59,24 +63,42 @@ const scoreClass = computed(() => {
   return s == null ? '' : s >= 85 ? 'good' : s >= 70 ? 'ok' : 'low'
 })
 
+// 文字一出来就预取首句（小树同款），点听示范时首句已在路上/已缓存
+watch(
+  () => props.text,
+  (t) => {
+    if (t && t.trim()) prefetch(t)
+  },
+  { immediate: true }
+)
+
 async function onListen() {
-  unlockAudio()
-  if (playing.value) {
-    stopAudio()
+  unlockAudio() // 必须在 await 之前同步解锁
+  if (playing.value || loading.value) {
+    stopDemo()
     playing.value = false
+    loading.value = false
     return
   }
   if (state.value !== 'idle') return
-  playing.value = true
+  loading.value = true
+  playing.value = false
   try {
-    const r = await api.tts(props.text)
-    if (!r.audio_url) {
+    const ok = await speakDemo(props.text, {
+      onStart: () => {
+        playing.value = true
+        loading.value = false
+      }
+    })
+    if (!ok && loading.value) {
       uni.showToast({ title: 'Mock 模式没有示范语音', icon: 'none' })
-    } else if (playing.value) {
-      await playAudio(absUrl(r.audio_url))
     }
   } catch (e) {
+    if (playing.value || loading.value) {
+      uni.showToast({ title: (e && e.message ? e.message : '朗读失败').slice(0, 40), icon: 'none' })
+    }
   } finally {
+    loading.value = false
     playing.value = false
   }
 }
@@ -88,8 +110,10 @@ async function onRecord() {
   }
   if (state.value === 'scoring') return
   unlockAudio()
+  stopDemo()
   stopAudio()
   playing.value = false
+  loading.value = false
   recorder = createRecorder({ vad: { silenceMs: 2200, maxMs: 120000 }, onLevel: (v) => (level.value = v) })
   state.value = 'recording'
   try {
@@ -111,7 +135,7 @@ async function onRecord() {
 
 onUnmounted(() => {
   recorder && recorder.destroy()
-  if (playing.value) stopAudio()
+  if (playing.value || loading.value) stopDemo()
 })
 </script>
 

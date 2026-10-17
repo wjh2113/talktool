@@ -161,13 +161,18 @@ export function createRecorder(cb = {}) {
 }
 
 let currentSource = null
+let playGen = 0
 export function playAudio(url) {
   return new Promise(async (resolve) => {
+    stopAudio()
+    const my = playGen
     try {
       const ctx = getCtx()
       if (ctx.state === 'suspended') await ctx.resume()
       const buf = await fetch(url).then((r) => r.arrayBuffer())
-      const audio = await ctx.decodeAudioData(buf)
+      if (my !== playGen) return resolve(false)
+      const audio = await ctx.decodeAudioData(buf.slice(0))
+      if (my !== playGen) return resolve(false)
       const src = ctx.createBufferSource()
       src.buffer = audio
       src.connect(ctx.destination)
@@ -181,6 +186,7 @@ export function playAudio(url) {
   })
 }
 export function stopAudio() {
+  playGen += 1
   try { currentSource && currentSource.stop() } catch (e) {}
   currentSource = null
 }

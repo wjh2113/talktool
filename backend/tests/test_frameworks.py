@@ -91,11 +91,18 @@ async def test_service():
     # 启动同步不会覆盖自定义场景的指南
     db.init_db()
     assert [f["code"] for f in svc.get_drill(cd["id"], "u1")["frameworks"]] == ["nvc", "trade"]
-    # 框架示例可以示范朗读，任意文字不行
+    # 框架示例可以示范朗读，任意文字不行；分句子串（≥6 字）也可读
     ex = fw.get_framework("prep")["example"]
     assert "audio_url" in await svc.tts(ex[:480].strip(), "u1")  # 不被拒绝
+    chunk = ex.strip()[:40]
+    assert len(chunk) >= 6 and "audio_url" in await svc.tts(chunk, "u1")
     try:
         await svc.tts("随便一句广告词", "u1")
+        raise AssertionError
+    except svc.BadRequest:
+        pass
+    try:
+        await svc.tts("广告", "u1")  # 过短子串也不行
         raise AssertionError
     except svc.BadRequest:
         pass
