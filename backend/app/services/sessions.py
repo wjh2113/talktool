@@ -101,13 +101,17 @@ def _public_drill(d: dict) -> dict:
     d.pop("system_prompt", None)  # 不把内部 prompt 暴露给前端
     d.pop("owner_id", None)
     d.pop("sample_script", None)
+    if isinstance(d.get("pitfalls"), str):
+        d["pitfalls"] = loads(d["pitfalls"], [])
     return d
 
 
 def get_drill(drill_id: int, user_id: str = None) -> dict:
-    """P3：训练详情（附带该用户在这个场景的最好成绩和练习次数）。"""
+    """P3：训练详情（附带推荐表达框架、常见误区，以及该用户在这个场景的最好成绩和练习次数）。"""
+    from .frameworks import drill_guide
     with get_conn() as conn:
         d = _public_drill(_load_drill(conn, drill_id, user_id))
+        d["frameworks"] = drill_guide(conn, drill_id)
         if user_id:
             r = conn.execute(
                 """SELECT COUNT(*) AS times, MAX(r.total_score) AS best FROM session s
@@ -149,11 +153,15 @@ async def _synthesize(provider, session_id, text: str, cache: bool = False):
 
 
 def _tts_allowed(user_id: str, text: str) -> bool:
-    """只允许朗读系统生成过的内容：本人的收藏、本人报告里的逐句示范、场景示范稿。防止被拿去合成任意文字。"""
+    """只允许朗读系统生成过的内容：本人的收藏、本人报告里的逐句示范、场景示范稿、框架示例。防止被拿去合成任意文字。"""
     with get_conn() as conn:
         if conn.execute("SELECT 1 FROM note WHERE user_id = ? AND text = ?", (user_id, text)).fetchone():
             return True
         if conn.execute("SELECT 1 FROM drill WHERE sample_script = ? AND sample_script != ''", (text,)).fetchone():
+            return True
+        # 表达框架的示例（详情页超长示例只读前 480 字）
+        if conn.execute("SELECT 1 FROM framework WHERE example = ? OR substr(example, 1, 480) = ?",
+                        (text, text)).fetchone():
             return True
         rows = conn.execute(
             """SELECT r.turn_reviews FROM report r JOIN session s ON s.id = r.session_id
@@ -311,9 +319,11 @@ def _save_report(conn, session_id: int, rep: dict) -> None:
 async def _report_job(session_id: int, retry: bool = False) -> None:
     """后台生成报告：成功 → ready，失败 → failed（前端可点“重新生成”）。"""
     try:
+        from .frameworks import guide_text
         with get_conn() as conn:
             s = row_to_dict(conn.execute("SELECT * FROM session WHERE id = ?", (session_id,)).fetchone())
             drill = _load_drill(conn, s["drill_id"])
+            drill["guide_text"] = guide_text(conn, s["drill_id"])
         transcript = loads(s["transcript"], [])
         summary = loads(s.get("metrics"), {}) or metrics_svc.summarize(transcript)
         rep = await report_svc.generate_report(drill, transcript, s["duration_sec"], metrics_svc.describe(summary),
@@ -381,7 +391,9 @@ async def get_turn_reviews(user_id: str, session_id: int) -> list:
         cached = loads(r["turn_reviews"], None)
         if cached:
             return cached
+        from .frameworks import guide_text
         drill = _load_drill(conn, s["drill_id"])
+        drill["guide_text"] = guide_text(conn, s["drill_id"])
     if not config.MOCK:
         quota.hit(user_id, "review", config.DAILY_REVIEW_LIMIT, "今天的复盘生成次数已用完，明天再来吧")
     reviews = await report_svc.generate_turn_reviews(drill, loads(s["transcript"], []), session_id)
@@ -455,6 +467,8 @@ def get_session_detail(user_id: str, session_id: int) -> dict:
     with get_conn() as conn:
         s = _get_session_row(conn, session_id, user_id)
         drill = _public_drill(_load_drill(conn, s["drill_id"]))
+        from .frameworks import drill_guide
+        drill["frameworks"] = drill_guide(conn, s["drill_id"])
         rep = _report_dict(conn.execute("SELECT * FROM report WHERE session_id = ?", (session_id,)).fetchone())
         prev = _previous_result(conn, user_id, s) if rep else None
         notes = [row_to_dict(n) for n in conn.execute(

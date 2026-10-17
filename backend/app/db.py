@@ -9,8 +9,11 @@ from zoneinfo import ZoneInfo
 from . import config
 from .seed_data import CATEGORIES
 from .seed_more import merge_into
+from .seed_more2 import EXTRA as EXTRA_3
+from .frameworks_data import CATEGORIES as FW_CATEGORIES, FRAMEWORKS
+from .guides_data import GUIDES
 
-ALL_CATEGORIES = merge_into(CATEGORIES)
+ALL_CATEGORIES = merge_into(merge_into(CATEGORIES), EXTRA_3)
 
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
 TZ = ZoneInfo(config.APP_TIMEZONE)
@@ -67,6 +70,7 @@ MIGRATIONS = [
     ("report", "turn_reviews", "TEXT NOT NULL DEFAULT '[]'"),
     ("session", "ip", "TEXT"),
     ("session", "report_status", "TEXT NOT NULL DEFAULT 'none'"),
+    ("drill", "pitfalls", "TEXT NOT NULL DEFAULT '[]'"),
 ]
 
 
@@ -111,6 +115,7 @@ def init_db(reseed: bool = False) -> None:
             conn.execute("DELETE FROM category WHERE is_system = 0")
             empty = True
         added = _sync_seed(conn)
+        _sync_frameworks(conn)
         if added and not empty:
             import logging
             logging.getLogger("talktool").info("已补充 %s 个内置训练场景", added)
@@ -145,6 +150,45 @@ def _sync_seed(conn: sqlite3.Connection) -> int:
                 )
                 added += 1
     return added
+
+
+def _sync_frameworks(conn: sqlite3.Connection) -> None:
+    """表达框架按 code 写入/更新；内置训练按标题关联推荐框架和常见误区（每次启动覆盖为代码里的版本）。"""
+    order = {c: i for i, c in enumerate(FW_CATEGORIES)}
+    for i, f in enumerate(FRAMEWORKS):
+        vals = (f["name"], f["category"], f["summary"], json.dumps(f["steps"], ensure_ascii=False),
+                f.get("when_to_use", ""), f.get("example", ""), json.dumps(f.get("pitfalls", []), ensure_ascii=False),
+                json.dumps(f.get("tips", []), ensure_ascii=False), f.get("detail", ""), f.get("source", ""),
+                order.get(f["category"], 99) * 1000 + i)
+        if conn.execute("SELECT 1 FROM framework WHERE code = ?", (f["code"],)).fetchone():
+            conn.execute("""UPDATE framework SET name=?, category=?, summary=?, steps=?, when_to_use=?, example=?,
+                            pitfalls=?, tips=?, detail=?, source=?, sort_order=? WHERE code=?""", vals + (f["code"],))
+        else:
+            conn.execute("""INSERT INTO framework(name, category, summary, steps, when_to_use, example, pitfalls, tips,
+                            detail, source, sort_order, code) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""", vals + (f["code"],))
+    ids = {r[0]: r[1] for r in conn.execute("SELECT code, id FROM framework")}
+    guides = dict(GUIDES)
+    for cat in ALL_CATEGORIES:
+        for sc in cat["scenarios"]:
+            for d in sc["drills"]:
+                if d.get("guide"):
+                    guides[d["title"]] = d["guide"]
+    for title, g in guides.items():
+        for (drill_id,) in conn.execute("SELECT id FROM drill WHERE title = ? AND owner_id IS NULL", (title,)).fetchall():
+            set_drill_guide(conn, drill_id, g.get("frameworks", []), g.get("pitfalls", []), ids)
+
+
+def set_drill_guide(conn, drill_id: int, frameworks: list, pitfalls: list, ids: dict = None) -> None:
+    """frameworks: [(code, 本场景示例)]；未知 code 会被忽略。"""
+    if ids is None:
+        ids = {r[0]: r[1] for r in conn.execute("SELECT code, id FROM framework")}
+    conn.execute("DELETE FROM drill_framework WHERE drill_id = ?", (drill_id,))
+    for i, item in enumerate(frameworks):
+        code, example = (item[0], item[1]) if isinstance(item, (list, tuple)) else (item.get("code"), item.get("example", ""))
+        if code in ids:
+            conn.execute("INSERT OR IGNORE INTO drill_framework(drill_id, framework_id, example, sort_order) VALUES (?,?,?,?)",
+                         (drill_id, ids[code], example or "", i))
+    conn.execute("UPDATE drill SET pitfalls = ? WHERE id = ?", (json.dumps(pitfalls or [], ensure_ascii=False), drill_id))
 
 
 def dumps(obj) -> str:

@@ -40,6 +40,7 @@ def build_report_messages(drill: dict, transcript: list, duration_sec: int, metr
 【对方角色】{drill['ai_role']}
 【压力等级】{drill['pressure_level']}
 【训练目标】{drill['training_goal']}
+【推荐表达框架】{drill.get('guide_text') or '（无）'}
 【训练时长】{duration_sec} 秒
 【表达数据】{metrics_text or '（无）'}
 
@@ -50,7 +51,8 @@ def build_report_messages(drill: dict, transcript: list, duration_sec: int, metr
 - 只评价“用户”的发言，从 {dims} 四个维度各打 1-10 分（整数），要严格、有区分度。
 - highlights：2-3 条做得好的点，要引用或指向用户的具体说法。
 - improvements：2-3 条改进建议，要具体到“可以怎么说”。
-- detail_comment：用 Markdown 写详细点评（150-300 字），可结合表达数据（语速、口头禅、停顿）给建议。
+- detail_comment：用 Markdown 写详细点评（150-300 字），可结合表达数据（语速、口头禅、停顿）给建议；
+  如果有推荐表达框架，点评用户是否用上了框架、哪一步缺失，并给出按框架重组后的示范。
 - summary：一句话总评（不超过 30 字）。
 
 严格按以下 JSON 结构输出，不要输出任何其他内容：
@@ -68,7 +70,8 @@ def build_turn_review_messages(drill: dict, transcript: list) -> list:
             n += 1
             lines.append(f"[{n}] 对方：{last_ai}\n    用户：{t['text']}")
     system = "你是沟通表达教练。只输出 JSON。"
-    user = f"""场景：{drill['title']}（用户角色：{drill['user_role']}；训练目标：{drill['training_goal']}）
+    fw = f"\n推荐表达框架：{drill['guide_text']}（更好的说法尽量体现这些框架的结构）" if drill.get("guide_text") else ""
+    user = f"""场景：{drill['title']}（用户角色：{drill['user_role']}；训练目标：{drill['training_goal']}）{fw}
 下面是用户的 {n} 句发言及对方当时说的话：
 {chr(10).join(lines)}
 
@@ -77,7 +80,7 @@ def build_turn_review_messages(drill: dict, transcript: list) -> list:
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
-def build_custom_drill_messages(description: str, pressure: str) -> list:
+def build_custom_drill_messages(description: str, pressure: str, framework_menu: str = "") -> list:
     system = ("你是沟通训练课程设计师，把用户描述的真实沟通情境改写成一个可以和 AI 语音对练的角色扮演场景。只输出 JSON。"
               "如果描述涉及违法、伤害他人、色情或与沟通训练无关的内容，输出 {\"error\": \"原因\"}。")
     user = f"""用户描述：{description}
@@ -90,7 +93,12 @@ def build_custom_drill_messages(description: str, pressure: str) -> list:
   "user_role": "用户的角色（15 字内）",
   "training_goal": "训练目标（考察的 2-3 个能力点，30 字内）",
   "opening_line": "AI 角色的第一句话（口语化，符合压力等级，40 字内）",
-  "duration_min": 3}}"""
+  "duration_min": 3,
+  "frameworks": [{{"code": "从下面的框架清单里选 1-2 个最合适的 code", "example": "用这个框架在本场景下的示范说法（60 字内）"}}],
+  "pitfalls": ["本场景常见误区（2-3 条，每条 15 字内）"]}}
+
+可选的表达框架清单（code:名称）：
+{framework_menu}"""
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 

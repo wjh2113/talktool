@@ -91,7 +91,9 @@ def test_migration():
     sc = [s for c in cats if c["name"] == "当众表达" for s in c["scenarios"] if s["title"] == "临时点名发言"]
     assert len(sc) == 1
     titles = [d["title"] for d in svc.get_scenario(sc[0]["id"])["drills"]]
-    assert "老场景" in titles and len(titles) == 1 + 2, titles
+    expect = [d for c in db.ALL_CATEGORIES if c["name"] == "当众表达" for s in c["scenarios"]
+              if s["title"] == "临时点名发言" for d in s["drills"]]
+    assert "老场景" in titles and len(titles) == 1 + len(expect), titles
     print("✓ migration")
 
 
@@ -113,7 +115,7 @@ async def test_features():
 
     reset_db()
     cats = svc.list_categories()
-    assert len(cats) == 8 and "我的场景" not in [c["name"] for c in cats]
+    assert len(cats) == len(db.ALL_CATEGORIES) and "我的场景" not in [c["name"] for c in cats]
 
     # ---- 表达数据：反应 0.9s → 说 2s → 停 1s → 说 1.5s → 尾静音 1.4s
     pcm = make_speech_pcm([(900, 0.002), (2000, 0.3), (1000, 0.002), (1500, 0.3), (1400, 0.002)])

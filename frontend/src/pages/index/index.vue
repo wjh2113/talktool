@@ -38,6 +38,14 @@
       </view>
     </view>
 
+    <view class="card quick fw-entry" @tap="goFrameworks">
+      <view>
+        <text class="quick-title">表达框架库</text>
+        <text class="quick-sub">汇报、拒绝、谈判、即兴发言… {{ fwTotal || '' }}{{ fwTotal ? ' 个' : '' }}说话套路，附示例和误区</text>
+      </view>
+      <text class="chevron">›</text>
+    </view>
+
     <view class="sec-head">
       <text class="sec-title">推荐练习</text>
     </view>
@@ -74,11 +82,13 @@ const counts = ref({ cats: 0, drills: 0 })
 const countText = computed(() =>
   counts.value.cats ? `${counts.value.cats} 大分类 · ${counts.value.drills} 个场景，选一个开练` : '选一个场景开练'
 )
+const fwTotal = ref(0)
 const PICK_TITLES = ['临时点名发言', '自我介绍', '平息客户怒火', '争取利益']
 
 async function load() {
   api.stats().then((s) => (stats.value = s)).catch(() => {})
   if (picks.value.length) return
+  api.frameworks().then((r) => (fwTotal.value = r.total)).catch(() => {})
   const cats = await api.categories()
   const all = []
   cats.forEach((c) => c.scenarios.forEach((s) => all.push({ ...s, category: c.name })))
@@ -89,7 +99,8 @@ async function load() {
 const goScenes = () => uni.switchTab({ url: '/pages/scenes/scenes' })
 const goCustom = () => uni.navigateTo({ url: '/pages/custom/custom' })
 const goNotebook = () => uni.switchTab({ url: '/pages/notebook/notebook' })
-const goRecords = () => uni.navigateTo({ url: '/pages/records/records' })
+const goFrameworks = () => uni.navigateTo({ url: '/pages/frameworks/frameworks' })
+const goRecords =() => uni.navigateTo({ url: '/pages/records/records' })
 const openScenario = (s) => uni.navigateTo({ url: `/pages/scenario/scenario?id=${s.id}` })
 
 onShow(load)

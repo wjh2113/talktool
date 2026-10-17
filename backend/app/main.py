@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from . import config
 from .db import init_db
-from .services import auth, library, maintenance, practice
+from .services import auth, frameworks, library, maintenance, practice
 from .services import sessions as svc
 from .services.gateway import GatewayError
 
@@ -206,6 +206,18 @@ def drill(drill_id: int, user: dict = Depends(current_user)):
 async def drill_script(drill_id: int, user: dict = Depends(current_user)):
     """跟读模式：场景示范稿"""
     return await practice.drill_script(user["uid"], drill_id)
+
+
+# ---------------- 表达框架库 ----------------
+
+@app.get("/api/frameworks")
+def framework_list(category: Optional[str] = None, q: Optional[str] = None, user: dict = Depends(current_user)):
+    return frameworks.list_frameworks(category, q)
+
+
+@app.get("/api/frameworks/{key}")
+def framework_detail(key: str, user: dict = Depends(current_user)):
+    return frameworks.get_framework(key, user["uid"])
 
 
 # ---------------- 训练会话 ----------------

@@ -351,12 +351,12 @@ EXTRA = {
 }
 
 
-def merge_into(categories: list) -> list:
-    """把 EXTRA 合并进 CATEGORIES 结构（返回新列表，不修改原数据）。"""
+def merge_into(categories: list, extra: dict = None) -> list:
+    """把 extra（默认本文件的 EXTRA）合并进 CATEGORIES 结构（返回新列表，不修改原数据）。"""
     import copy
     out = copy.deepcopy(categories)
     by_name = {c["name"]: c for c in out}
-    for cat_name, scenarios in EXTRA.items():
+    for cat_name, scenarios in (EXTRA if extra is None else extra).items():
         cat = by_name.get(cat_name)
         if cat is None:
             cat = {"name": cat_name, "scenarios": []}

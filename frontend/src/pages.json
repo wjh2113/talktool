@@ -71,6 +71,18 @@
       }
     },
     {
+      "path": "pages/frameworks/frameworks",
+      "style": {
+        "navigationBarTitleText": "表达框架库"
+      }
+    },
+    {
+      "path": "pages/framework/framework",
+      "style": {
+        "navigationBarTitleText": "表达框架"
+      }
+    },
+    {
       "path": "pages/login/login",
       "style": {
         "navigationStyle": "custom"

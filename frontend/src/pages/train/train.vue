@@ -29,11 +29,25 @@
       <view v-if="showCaption && caption" class="caption">
         <text>{{ caption }}</text>
       </view>
+
+      <view v-if="showFw && frameworks.length" class="cheat">
+        <view v-for="f in frameworks.slice(0, 2)" :key="f.id" class="cheat-fw">
+          <text class="cheat-name">{{ f.name }}</text>
+          <view class="cheat-steps">
+            <text v-for="(s, j) in f.steps" :key="j" class="cheat-step">{{ j + 1 }}. {{ s.name }}</text>
+          </view>
+        </view>
+      </view>
     </view>
 
     <view class="bottom">
-      <view class="cap-toggle" @tap="showCaption = !showCaption">
-        <text>{{ showCaption ? '隐藏字幕' : '显示字幕' }}</text>
+      <view class="toggles">
+        <view class="cap-toggle" @tap="showCaption = !showCaption">
+          <text>{{ showCaption ? '隐藏字幕' : '显示字幕' }}</text>
+        </view>
+        <view v-if="frameworks.length" class="cap-toggle" @tap="showFw = !showFw">
+          <text>{{ showFw ? '隐藏框架提示' : '框架提示' }}</text>
+        </view>
       </view>
       <view class="end-btn" @tap="finish">结束训练</view>
     </view>
@@ -61,6 +75,8 @@ const level = ref(0)
 const caption = ref('')
 const showCaption = ref(false)
 const mock = ref(false)
+const showFw = ref(false)
+const frameworks = computed(() => (drill.value && drill.value.frameworks) || [])
 
 let sessionId = null
 let alive = true
@@ -326,7 +342,19 @@ onUnload(() => {
   overflow: hidden;
 }
 .bottom { padding: 0 48rpx calc(40rpx + env(safe-area-inset-bottom)); }
+.toggles { display: flex; justify-content: center; gap: 48rpx; }
 .cap-toggle { text-align: center; font-size: 24rpx; opacity: 0.7; margin-bottom: 24rpx; }
+.cheat {
+  margin-top: 28rpx;
+  align-self: stretch;
+  padding: 20rpx 28rpx;
+  border-radius: 20rpx;
+  background: rgba(255, 255, 255, 0.14);
+}
+.cheat-fw + .cheat-fw { margin-top: 16rpx; }
+.cheat-name { font-size: 26rpx; font-weight: 700; }
+.cheat-steps { display: flex; flex-wrap: wrap; gap: 8rpx 20rpx; margin-top: 8rpx; }
+.cheat-step { font-size: 24rpx; opacity: 0.9; }
 .end-btn {
   height: 96rpx;
   line-height: 96rpx;

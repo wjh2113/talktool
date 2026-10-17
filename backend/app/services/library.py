@@ -2,7 +2,7 @@
 import logging
 
 from .. import config
-from ..db import get_conn, now_str, row_to_dict, system_scenario_id
+from ..db import get_conn, now_str, row_to_dict, set_drill_guide, system_scenario_id
 from . import gateway, quota
 from .prompts import build_custom_drill_messages
 from .sessions import BadRequest, NotFound, _load_drill, _public_drill
@@ -81,6 +81,9 @@ def _mock_custom(description: str, pressure: str) -> dict:
         "training_goal": "清晰表达诉求、回应对方顾虑、推动达成共识",
         "opening_line": "你找我有什么事？我时间不多，直说吧。",
         "duration_min": 3,
+        "frameworks": [{"code": "nvc", "example": "（Mock）先讲事实，再说感受和需要，最后提一个具体请求。"},
+                       {"code": "trade", "example": "（Mock）让步可以，但要换一个条件。"}],
+        "pitfalls": ["一上来就情绪化", "只讲自己的诉求", "没有具体的请求"],
     }
 
 
@@ -101,7 +104,10 @@ async def create_custom_drill(user_id: str, description: str, pressure: str = "�
     if config.MOCK:
         g = _mock_custom(description, pressure)
     else:
-        text = await gateway.chat(build_custom_drill_messages(description, pressure),
+        with get_conn() as conn:
+            menu = "、".join(f"{r[0]}:{r[1]}" for r in conn.execute(
+                "SELECT code, name FROM framework WHERE category != '自媒体创作' ORDER BY sort_order"))
+        text = await gateway.chat(build_custom_drill_messages(description, pressure, menu),
                                   capability=config.CUSTOM_CAPABILITY, temperature=0.7, max_tokens=900,
                                   user_id=user_id, max_cost=config.MAX_COST_OTHER,
                                   idempotency_key=gateway.idem_key("custom", user_id, description, pressure))
@@ -130,8 +136,12 @@ async def create_custom_drill(user_id: str, description: str, pressure: str = "�
                VALUES (?,?,?,?,?,'纯语音',?,?,?,?,'online',0,?)""",
             (sid, fields["title"], fields["description"], pressure, duration, fields["ai_role"],
              fields["user_role"], fields["training_goal"], fields["opening_line"], user_id)).lastrowid
-        d = _load_drill(conn, did, user_id)
-    out = _public_drill(d)
+        fws = [(x.get("code"), _clip(x.get("example"), 120)) for x in (g.get("frameworks") or [])[:3]
+               if isinstance(x, dict)]
+        pits = [_clip(p, 40) for p in (g.get("pitfalls") or [])[:4] if p]
+        set_drill_guide(conn, did, fws, pits)
+    from .sessions import get_drill
+    out = get_drill(did, user_id)
     out["source_description"] = description
     return out
 

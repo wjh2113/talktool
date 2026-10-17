@@ -25,6 +25,15 @@ export const api = {
   drill: (id) => request(`/api/drills/${id}`),
   drillScript: (id) => request(`/api/drills/${id}/script`, { timeout: 90000 }),
 
+  // 表达框架库
+  frameworks: (category = '', q = '') => {
+    const qs = []
+    if (category) qs.push('category=' + encodeURIComponent(category))
+    if (q) qs.push('q=' + encodeURIComponent(q))
+    return request('/api/frameworks' + (qs.length ? '?' + qs.join('&') : ''))
+  },
+  framework: (key) => request(`/api/frameworks/${encodeURIComponent(key)}`),
+
   // 训练
   startSession: (drillId) => request('/api/sessions', { method: 'POST', data: { drill_id: Number(drillId) } }),
   turn: (sessionId, rec) => uploadAudio(`/api/sessions/${sessionId}/turn`, rec),

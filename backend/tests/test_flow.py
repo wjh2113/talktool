@@ -51,7 +51,7 @@ def backdate(sid, seconds):
 async def main():
     db.init_db()
     cats = svc.list_categories()
-    assert len(cats) == 8, len(cats)
+    assert len(cats) == len(db.ALL_CATEGORIES), len(cats)
     expect = db.ALL_CATEGORIES
     assert sum(len(c["scenarios"]) for c in cats) == sum(len(c["scenarios"]) for c in expect)
     assert sum(s["drill_count"] for c in cats for s in c["scenarios"]) == \
@@ -59,7 +59,7 @@ async def main():
     db.init_db()  # 幂等：再跑一次不重复写入
     assert sum(s["drill_count"] for c in svc.list_categories() for s in c["scenarios"]) == \
         sum(s["drill_count"] for c in cats for s in c["scenarios"])
-    sc = svc.get_scenario(cats[-1]["scenarios"][0]["id"])
+    sc = svc.get_scenario([c for c in cats if c["name"] == "当众表达"][0]["scenarios"][0]["id"])
     assert sc["category_name"] == "当众表达" and sc["title"] == "临时点名发言"
     d = svc.get_drill(sc["drills"][0]["id"])
     assert "system_prompt" not in d

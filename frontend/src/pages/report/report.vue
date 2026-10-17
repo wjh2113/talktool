@@ -149,6 +149,26 @@
       <text class="empty-sub">{{ s.summary_line }}</text>
     </view>
 
+    <!-- 本场景推荐的表达框架：对照报告复盘 -->
+    <view v-if="fws.length" class="card block">
+      <text class="block-title">对照表达框架复盘</text>
+      <view v-for="f in fws" :key="f.id" class="fw" @tap="openFw(f)">
+        <view class="fw-head">
+          <text class="fw-name">{{ f.name }}</text>
+          <text class="muted">详解 ›</text>
+        </view>
+        <text class="fw-steps">{{ f.steps.map((x) => x.name).join(' → ') }}</text>
+        <text v-if="f.scene_example" class="fw-ex">本场景示例：{{ f.scene_example }}</text>
+      </view>
+      <view v-if="pitfalls.length" class="pits">
+        <text class="muted">常见误区，对照看看自己有没有踩：</text>
+        <view v-for="(p, i) in pitfalls" :key="i" class="item">
+          <text class="dot bad">✕</text>
+          <text class="item-txt">{{ p }}</text>
+        </view>
+      </view>
+    </view>
+
     <!-- 对话回放 -->
     <view v-if="userTurns > 0" class="card block">
       <view class="replay-head" @tap="showTranscript = !showTranscript">
@@ -256,6 +276,10 @@ const dimDelta = (k, v) => (prevScore(k) === null ? null : v - prevScore(k))
 const deltaText = (d) => (d > 0 ? `↑${d}` : d < 0 ? `↓${-d}` : '持平')
 const deltaClass = (d) => (d === null ? '' : d > 0 ? 'up' : d < 0 ? 'down' : 'flat')
 const levelClass = (lv) => (lv === '适中' || lv === '迅速' || lv === '正常' ? 'good' : 'warn')
+
+const fws = computed(() => (s.value && s.value.drill.frameworks) || [])
+const pitfalls = computed(() => (s.value && s.value.drill.pitfalls) || [])
+const openFw = (f) => uni.navigateTo({ url: `/pages/framework/framework?key=${f.code}` })
 
 const isSaved = (text) => !!saved.value[text]
 const savedId = (text) => saved.value[text] || null
@@ -369,6 +393,14 @@ onUnload(() => clearTimeout(pollTimer))
 }
 .good { background: #E7F7EE; color: #22A060; }
 .tip { background: $tt-tag-bg; color: $tt-primary; }
+.fw { padding: 20rpx 0; border-bottom: 1rpx solid #F0F2F5; display: flex; flex-direction: column; }
+.fw-head { display: flex; justify-content: space-between; align-items: center; }
+.fw-name { font-size: 29rpx; font-weight: 700; color: $tt-primary; }
+.fw-steps { font-size: 26rpx; color: #333; margin-top: 8rpx; line-height: 1.6; }
+.fw-ex { font-size: 25rpx; color: $tt-text-2; margin-top: 8rpx; line-height: 1.7; }
+.pits { margin-top: 24rpx; }
+.pits .muted { display: block; margin-bottom: 14rpx; }
+.dot.bad { color: #F56C6C; background: transparent; }
 .item-txt { flex: 1; font-size: 28rpx; line-height: 1.7; color: #333; }
 .empty { padding: 70rpx 40rpx; display: flex; flex-direction: column; align-items: center; margin-bottom: 28rpx; }
 .empty-icon-wrap {

@@ -45,6 +45,37 @@
       <text v-if="d.my_times" class="muted role">已练 {{ d.my_times }} 次{{ d.my_best != null ? ' · 最高 ' + d.my_best + ' 分' : '' }}</text>
     </view>
 
+    <template v-if="d.frameworks && d.frameworks.length">
+      <view class="block-row">
+        <text class="block-title">推荐表达框架</text>
+        <text class="more" @tap="openLibrary">框架库 ›</text>
+      </view>
+      <view v-for="(f, i) in d.frameworks" :key="f.id" class="card fw" @tap="openFw(f)">
+        <view class="fw-head">
+          <text class="fw-no">{{ i + 1 }}</text>
+          <text class="fw-name">{{ f.name }}</text>
+          <text class="fw-go">详解 ›</text>
+        </view>
+        <view class="steps">
+          <text v-for="(s, j) in f.steps" :key="j" class="step">{{ s.name }}</text>
+        </view>
+        <view v-if="f.scene_example" class="example">
+          <text class="ex-k">本场景这样说</text>
+          <text class="ex-v">{{ f.scene_example }}</text>
+        </view>
+      </view>
+    </template>
+
+    <template v-if="d.pitfalls && d.pitfalls.length">
+      <text class="block-title">常见误区</text>
+      <view class="card desc pits">
+        <view v-for="(p, i) in d.pitfalls" :key="i" class="pit">
+          <text class="pit-x">✕</text>
+          <text class="pit-t">{{ p }}</text>
+        </view>
+      </view>
+    </template>
+
     <view class="footer">
       <view class="btn-plain read" @tap="readAlong">跟读示范</view>
       <view class="btn-primary go" @tap="start">开始训练</view>
@@ -68,6 +99,14 @@ function back() {
 
 function readAlong() {
   uni.navigateTo({ url: `/pages/readalong/readalong?drillId=${d.value.id}` })
+}
+
+function openFw(f) {
+  uni.navigateTo({ url: `/pages/framework/framework?key=${f.code}` })
+}
+
+function openLibrary() {
+  uni.navigateTo({ url: '/pages/frameworks/frameworks' })
 }
 
 function start() {
@@ -133,6 +172,25 @@ onLoad(async (q) => {
 }
 .goal { display: flex; flex-direction: column; }
 .role { margin-top: 16rpx; }
+.block-row { display: flex; align-items: center; justify-content: space-between; padding-right: 32rpx; }
+.more { color: $tt-primary; font-size: 26rpx; margin-top: 24rpx; }
+.fw { margin: 0 32rpx 20rpx; padding: 32rpx 36rpx; }
+.fw-head { display: flex; align-items: center; }
+.fw-no {
+  width: 40rpx; height: 40rpx; line-height: 40rpx; text-align: center; border-radius: 50%;
+  background: $tt-primary; color: #fff; font-size: 24rpx; margin-right: 16rpx; flex-shrink: 0;
+}
+.fw-name { flex: 1; font-size: 31rpx; font-weight: 700; }
+.fw-go { color: $tt-text-3; font-size: 24rpx; }
+.steps { display: flex; flex-wrap: wrap; gap: 12rpx; margin-top: 20rpx; }
+.step { background: #EEF6FF; color: $tt-primary; font-size: 24rpx; padding: 8rpx 18rpx; border-radius: 8rpx; }
+.example { margin-top: 20rpx; background: #F7F9FC; border-radius: 12rpx; padding: 20rpx 24rpx; display: flex; flex-direction: column; }
+.ex-k { color: $tt-text-3; font-size: 22rpx; margin-bottom: 8rpx; }
+.ex-v { color: #333; font-size: 28rpx; line-height: 1.7; }
+.pits { display: flex; flex-direction: column; gap: 16rpx; }
+.pit { display: flex; align-items: flex-start; }
+.pit-x { color: #F56C6C; font-size: 26rpx; margin-right: 14rpx; line-height: 1.85; flex-shrink: 0; }
+.pit-t { flex: 1; font-size: 28rpx; }
 .footer .read { width: 230rpx; flex-shrink: 0; }
 .footer .go { flex: 1; }
 .footer {

@@ -36,7 +36,8 @@ CREATE TABLE IF NOT EXISTS drill (
     status          TEXT    NOT NULL DEFAULT 'online' CHECK (status IN ('online','offline')),
     sort_order      INTEGER NOT NULL DEFAULT 0,
     owner_id        TEXT,                          -- NULL = 公共场景；否则为用户自定义场景
-    sample_script   TEXT    NOT NULL DEFAULT ''    -- 跟读示范稿（首次请求时由 LLM 生成并缓存）
+    sample_script   TEXT    NOT NULL DEFAULT '',   -- 跟读示范稿（首次请求时由 LLM 生成并缓存）
+    pitfalls        TEXT    NOT NULL DEFAULT '[]'  -- 本场景常见误区 JSON
 );
 CREATE INDEX IF NOT EXISTS idx_drill_scenario ON drill(scenario_id);
 
@@ -128,3 +129,30 @@ CREATE TABLE IF NOT EXISTS usage_counter (
     count    INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (subject, bucket, kind)
 );
+
+-- ============ 表达框架库 ============
+CREATE TABLE IF NOT EXISTS framework (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    code         TEXT    NOT NULL UNIQUE,
+    name         TEXT    NOT NULL,
+    category     TEXT    NOT NULL,
+    summary      TEXT    NOT NULL DEFAULT '',
+    steps        TEXT    NOT NULL DEFAULT '[]',   -- JSON: [{key, name, desc}]
+    when_to_use  TEXT    NOT NULL DEFAULT '',
+    example      TEXT    NOT NULL DEFAULT '',
+    pitfalls     TEXT    NOT NULL DEFAULT '[]',
+    tips         TEXT    NOT NULL DEFAULT '[]',
+    detail       TEXT    NOT NULL DEFAULT '',     -- 详细说明（写作/讲述要点）
+    source       TEXT    NOT NULL DEFAULT '',
+    sort_order   INTEGER NOT NULL DEFAULT 0
+);
+
+-- 训练 ↔ 推荐框架（example = 本场景下的示例说法）
+CREATE TABLE IF NOT EXISTS drill_framework (
+    drill_id      INTEGER NOT NULL REFERENCES drill(id) ON DELETE CASCADE,
+    framework_id  INTEGER NOT NULL REFERENCES framework(id) ON DELETE CASCADE,
+    example       TEXT    NOT NULL DEFAULT '',
+    sort_order    INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (drill_id, framework_id)
+);
+CREATE INDEX IF NOT EXISTS idx_df_framework ON drill_framework(framework_id);
