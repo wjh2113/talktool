@@ -51,11 +51,10 @@ def build_report_messages(drill: dict, transcript: list, duration_sec: int, metr
 - 只评价“用户”的发言，从 {dims} 四个维度各打 1-10 分（整数），要严格、有区分度。
 - highlights：2-3 条做得好的点，要引用或指向用户的具体说法。
 - improvements：2-3 条改进建议，要具体到“可以怎么说”。
-- detail_comment：用 Markdown 写详细点评（150-300 字），可结合表达数据（语速、口头禅、停顿）给建议；
-  如果有推荐表达框架，点评用户是否用上了框架、哪一步缺失，并给出按框架重组后的示范。
+- detail_comment：用 Markdown 写详细点评（80-150 字），可结合表达数据给建议；有推荐框架时点明缺了哪一步，并给一句示范。
 - summary：一句话总评（不超过 30 字）。
 
-严格按以下 JSON 结构输出，不要输出任何其他内容（不要 markdown 代码块；字符串内的双引号写成 \\"；不要尾逗号）：
+严格按以下 JSON 结构输出，不要输出任何其他内容（不要 markdown 代码块；字符串里不要再套英文双引号，改用「」；不要尾逗号；必须一次输出完整可解析的 JSON）：
 {{"scores": {{{scores_example}}}, "summary": "...", "highlights": ["..."], "improvements": ["..."], "detail_comment": "..."}}"""
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 

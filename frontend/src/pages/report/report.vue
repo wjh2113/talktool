@@ -12,33 +12,31 @@
       <text class="muted">{{ s.started_at }}</text>
     </view>
 
-    <!-- 正常报告 -->
-    <block v-if="ready">
-      <view class="card score-card">
-        <view class="total">
-          <text class="total-num">{{ r.total_score }}</text>
-          <text class="total-unit">分</text>
-          <text v-if="totalDelta !== null" class="delta" :class="deltaClass(totalDelta)">{{ deltaText(totalDelta) }}</text>
-        </view>
-        <text v-if="s.previous" class="prev-line">上次 {{ s.previous.total_score }} 分 · {{ s.previous.started_at.slice(5, 16) }}</text>
-        <text class="total-sum">{{ r.summary }}</text>
-        <view class="dims">
-          <view v-for="(v, k) in r.scores" :key="k" class="dim">
-            <text class="dim-k">{{ k }}</text>
-            <view class="bar">
-              <view v-if="prevScore(k) !== null" class="bar-prev" :style="{ width: prevScore(k) * 10 + '%' }" />
-              <view class="bar-in" :style="{ width: v * 10 + '%' }" />
-            </view>
-            <text class="dim-v">{{ v }}</text>
-            <text class="dim-d" :class="deltaClass(dimDelta(k, v))">{{ dimDelta(k, v) === null ? '' : deltaText(dimDelta(k, v)) }}</text>
+    <!-- 正常报告（分数） -->
+    <view v-if="ready" class="card score-card">
+      <view class="total">
+        <text class="total-num">{{ r.total_score }}</text>
+        <text class="total-unit">分</text>
+        <text v-if="totalDelta !== null" class="delta" :class="deltaClass(totalDelta)">{{ deltaText(totalDelta) }}</text>
+      </view>
+      <text v-if="s.previous" class="prev-line">上次 {{ s.previous.total_score }} 分 · {{ s.previous.started_at.slice(5, 16) }}</text>
+      <text class="total-sum">{{ r.summary }}</text>
+      <view class="dims">
+        <view v-for="(v, k) in r.scores" :key="k" class="dim">
+          <text class="dim-k">{{ k }}</text>
+          <view class="bar">
+            <view v-if="prevScore(k) !== null" class="bar-prev" :style="{ width: prevScore(k) * 10 + '%' }" />
+            <view class="bar-in" :style="{ width: v * 10 + '%' }" />
           </view>
-        </view>
-        <view v-if="s.previous" class="legend">
-          <view class="lg"><view class="lg-dot now" /><text>本次</text></view>
-          <view class="lg"><view class="lg-dot prev" /><text>上次</text></view>
+          <text class="dim-v">{{ v }}</text>
+          <text class="dim-d" :class="deltaClass(dimDelta(k, v))">{{ dimDelta(k, v) === null ? '' : deltaText(dimDelta(k, v)) }}</text>
         </view>
       </view>
-    </block>
+      <view v-if="s.previous" class="legend">
+        <view class="lg"><view class="lg-dot now" /><text>本次</text></view>
+        <view class="lg"><view class="lg-dot prev" /><text>上次</text></view>
+      </view>
+    </view>
 
     <!-- 表达数据（不依赖大模型，只要说过话就有） -->
     <view v-if="m && m.turns" class="card block">
@@ -68,8 +66,8 @@
       <text class="muted metric-foot">共发言 {{ m.turns }} 次 · {{ m.chars }} 字 · 有效说话 {{ m.speech_sec }} 秒。参考：日常对话 140–270 字/分较舒适。</text>
     </view>
 
+    <!-- 报告正文 -->
     <block v-if="ready">
-      <!-- 逐句复盘 + 示范 + 跟读 -->
       <view v-if="userTurns > 0" class="card block">
         <view class="replay-head">
           <text class="block-title no-mb">逐句复盘（{{ userTurns }} 句）</text>
@@ -102,7 +100,7 @@
         </view>
       </view>
 
-      <view v-if="r.highlights.length" class="card block">
+      <view v-if="r.highlights && r.highlights.length" class="card block">
         <text class="block-title">做得好的地方</text>
         <view v-for="(h, i) in r.highlights" :key="i" class="item">
           <text class="dot good">✓</text>
@@ -110,7 +108,7 @@
         </view>
       </view>
 
-      <view v-if="r.improvements.length" class="card block">
+      <view v-if="r.improvements && r.improvements.length" class="card block">
         <text class="block-title">改进建议</text>
         <view v-for="(h, i) in r.improvements" :key="i" class="item">
           <text class="dot tip">{{ i + 1 }}</text>
@@ -125,23 +123,21 @@
       </view>
     </block>
 
-    <!-- 报告生成失败 -->
-    <!-- 报告生成中（后台生成，页面轮询） -->
-    <view v-else-if="s.report_status === 'pending'" class="card empty">
+    <!-- 状态卡：不用 v-else 跨 block，避免误显示「生成失败」 -->
+    <view v-if="reportPending" class="card empty">
       <view class="spinner" />
       <text class="empty-title">报告生成中…</text>
       <text class="empty-sub">AI 正在复盘你的表现，通常需要 10–40 秒。可以先离开，稍后在“训练记录”里查看。</text>
     </view>
 
-    <view v-else-if="s.status === 'completed'" class="card empty">
+    <view v-else-if="reportFailed" class="card empty">
       <image class="empty-icon" src="/static/icons/clock.png" />
       <text class="empty-title">报告生成失败</text>
       <text class="empty-sub">评估结果解析失败或网关异常，点下面再试一次即可。</text>
       <view class="retry" @tap="retry">重新生成报告</view>
     </view>
 
-    <!-- 时长过短 / 主动放弃 -->
-    <view v-else class="card empty">
+    <view v-else-if="reportSkipped" class="card empty">
       <view class="empty-icon-wrap">
         <image class="empty-icon" :src="s.status === 'abandoned' ? '/static/icons/flag.png' : '/static/icons/clock.png'" />
       </view>
@@ -193,7 +189,7 @@
 
 <script setup>
 import { ref, computed } from 'vue'
-import { onLoad, onUnload } from '@dcloudio/uni-app'
+import { onLoad, onShow, onUnload } from '@dcloudio/uni-app'
 import { api } from '../../utils/api'
 import { durationText, mdToHtml } from '../../utils/format'
 import ReadAloud from '../../components/ReadAloud/ReadAloud.vue'
@@ -202,9 +198,13 @@ const s = ref(null)
 const from = ref('')
 const showTranscript = ref(false)
 const saved = ref({}) // text -> note id
+const sessionId = ref(null)
 
 const r = computed(() => s.value && s.value.report)
-const ready = computed(() => s.value && s.value.status === 'completed' && r.value && s.value.report_status !== 'pending')
+const ready = computed(() => !!(s.value && s.value.status === 'completed' && r.value && s.value.report_status !== 'pending'))
+const reportPending = computed(() => !!(s.value && s.value.status === 'completed' && s.value.report_status === 'pending'))
+const reportFailed = computed(() => !!(s.value && s.value.status === 'completed' && !r.value && s.value.report_status !== 'pending'))
+const reportSkipped = computed(() => !!(s.value && s.value.status !== 'completed'))
 let pollTimer = null
 let pollCount = 0
 
@@ -300,6 +300,7 @@ async function toggleSave(kind, text, source) {
 }
 
 async function retry() {
+  if (!s.value) return
   applyDetail(await api.retryReport(s.value.id))
   pollCount = 0
   startPolling()
@@ -314,10 +315,21 @@ function again() {
   uni.redirectTo({ url: `/pages/drill/drill?id=${s.value.drill_id}` })
 }
 
+async function reload() {
+  if (!sessionId.value) return
+  applyDetail(await api.session(sessionId.value))
+  startPolling()
+}
+
 onLoad(async (q) => {
   from.value = q.from || ''
-  applyDetail(await api.session(q.id))
-  startPolling()
+  sessionId.value = q.id
+  await reload()
+})
+
+// 从其他页返回时重新拉一次，避免一直停在「生成失败」的旧状态
+onShow(() => {
+  if (sessionId.value && s.value && !ready.value) reload().catch(() => {})
 })
 
 onUnload(() => clearTimeout(pollTimer))

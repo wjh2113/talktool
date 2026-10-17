@@ -1,5 +1,6 @@
 """训练报告生成：边界判定（too_short / abandoned）+ LLM 结构化评估。"""
 import logging
+import secrets
 import time
 
 from .. import config
@@ -98,36 +99,44 @@ def report_capability(transcript: list) -> str:
         else config.REPORT_CAPABILITY
 
 
+def _report_idem_key(session_id, *parts) -> str:
+    """手动重试 / JSON 修复必须换新键，否则网关会回放上一次坏掉的正文。"""
+    return gateway.idem_key("report", session_id, *parts, int(time.time()), secrets.token_hex(3))
+
+
 async def generate_report(drill: dict, transcript: list, duration_sec: int, metrics_text: str = "",
                           session_id=None, retry: bool = False) -> dict:
     if config.MOCK:
         return mock_report(transcript)
     msgs = build_report_messages(drill, transcript, duration_sec, metrics_text)
     cap = report_capability(transcript)
-    key = None
-    if session_id:
-        # 首次生成用固定键（网络重试不重复扣费）；手动“重新生成”换键，按分钟区分避免连点重复扣费
-        key = gateway.idem_key("report", session_id, "retry", int(time.time() // 60)) if retry \
-            else gateway.idem_key("report", session_id)
+    # 首次生成用固定键（网络抖动自动重试不重复扣费）；手动重试必须换新键
+    key = _report_idem_key(session_id, "retry") if (session_id and retry) \
+        else (gateway.idem_key("report", session_id) if session_id else None)
     text = await gateway.chat(msgs, capability=cap, temperature=0.3,
                               max_tokens=config.REPORT_MAX_TOKENS, idempotency_key=key,
                               max_cost=config.MAX_COST_REPORT)
     try:
         return normalize_report(gateway.extract_json(text), transcript)
     except gateway.GatewayError as e:
-        # 模型偶发吐出非法 JSON：再要一次合法对象（换幂等键，避免命中坏缓存）
-        log.warning("报告 JSON 不可用，自动再生成一次：%s", e)
+        # 模型偶发吐出非法 / 截断的 JSON：再要一次合法对象（新幂等键，避免命中坏缓存）
+        log.warning("报告 JSON 不可用，自动再生成一次：%s | head=%r", e, (text or "")[:180])
         fix = msgs + [
             {"role": "assistant", "content": (text or "")[:2500]},
             {"role": "user", "content":
-             "上一段不是合法 JSON。请只输出一个 JSON 对象，不要 markdown 代码块，不要注释；"
-             "字符串里的双引号请写成 \\\"，不要用中文弯引号包字段。"},
+             "上一段不是完整合法的 JSON（可能被截断或有语法错误）。请重新只输出一个完整 JSON 对象："
+             "不要 markdown 代码块，不要注释，字段不要尾逗号；字符串里若需引号请用 \\\\\"（或改写成中文直角引号「」）。"
+             "detail_comment 控制在 120 字以内，确保整段 JSON 完整可解析。"},
         ]
-        key2 = gateway.idem_key("report", session_id, "jsonfix", int(time.time() // 60)) if session_id else None
+        key2 = _report_idem_key(session_id, "jsonfix") if session_id else None
         text2 = await gateway.chat(fix, capability=cap, temperature=0.1,
-                                   max_tokens=config.REPORT_MAX_TOKENS, idempotency_key=key2,
+                                   max_tokens=max(config.REPORT_MAX_TOKENS, 1600), idempotency_key=key2,
                                    max_cost=config.MAX_COST_REPORT)
-        return normalize_report(gateway.extract_json(text2), transcript)
+        try:
+            return normalize_report(gateway.extract_json(text2), transcript)
+        except gateway.GatewayError:
+            log.error("报告 JSON 二次仍失败 | head=%r", (text2 or "")[:180])
+            raise
 
 
 async def generate_turn_reviews(drill: dict, transcript: list, session_id=None) -> list:
