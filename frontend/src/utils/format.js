@@ -17,19 +17,20 @@ export function durationText(sec) {
   return `${Math.floor(sec / 60)} 分 ${sec % 60} 秒`
 }
 
-// 场景封面：没有图片时按分类给一个渐变色
+// 场景封面：没有图片时按分类给一个渐变色（与青绿主色协调，避开旧天蓝）
 const PALETTE = {
-  职场赋能: ['#5AA9F8', '#2F7FDB'],
-  酒桌文化: ['#F6A86B', '#E0704A'],
-  求职面试: ['#6CC5B0', '#2E9C86'],
-  社交建联: ['#8F9CF6', '#5B67D8'],
-  亲密关系: ['#F59AB4', '#DD6489'],
-  冲突化解: ['#F38A80', '#D2544B'],
-  共赢协商: ['#7CC9E8', '#3A97C4'],
-  当众表达: ['#6AA8F2', '#3C78D8']
+  职场赋能: ['#1AA897', '#0B6B5F'],
+  酒桌文化: ['#E8A05A', '#C46B2E'],
+  求职面试: ['#3DB89A', '#1A7A66'],
+  社交建联: ['#4A9B8C', '#2A6B5E'],
+  亲密关系: ['#E07A8A', '#B84A5C'],
+  冲突化解: ['#E07060', '#B8483A'],
+  共赢协商: ['#2BB3A0', '#0E7A6C'],
+  当众表达: ['#3C8F7E', '#1A5F52'],
+  自媒体口播: ['#5CB8A6', '#2A7A6C']
 }
 export function coverStyle(category) {
-  const [a, b] = PALETTE[category] || ['#7FB6F4', '#3B85DB']
+  const [a, b] = PALETTE[category] || ['#1AA897', '#0B6B5F']
   return `background: linear-gradient(135deg, ${a} 0%, ${b} 100%);`
 }
 
@@ -47,7 +48,7 @@ export function mdToHtml(md = '') {
     if ((m = line.match(/^#{1,6}\s+(.*)$/))) { flush(); out.push(`<p style="font-weight:600;margin:10px 0 4px;color:#1F2329;">${inline(m[1])}</p>`) }
     else if ((m = line.match(/^[-*]\s+(.*)$/))) { if (!list || list.t !== 'ul') { flush(); list = { t: 'ul', items: [] } } list.items.push(`<li>${inline(m[1])}</li>`) }
     else if ((m = line.match(/^\d+[.、]\s*(.*)$/))) { if (!list || list.t !== 'ol') { flush(); list = { t: 'ol', items: [] } } list.items.push(`<li>${inline(m[1])}</li>`) }
-    else if ((m = line.match(/^>\s?(.*)$/))) { flush(); out.push(`<p style="color:#999;border-left:3px solid #E8F4FE;padding-left:8px;margin:6px 0;">${inline(m[1])}</p>`) }
+    else if ((m = line.match(/^>\s?(.*)$/))) { flush(); out.push(`<p style="color:#8A9691;border-left:3px solid #D8F3EE;padding-left:8px;margin:6px 0;">${inline(m[1])}</p>`) }
     else { flush(); out.push(`<p style="margin:6px 0;">${inline(line)}</p>`) }
   }
   flush()

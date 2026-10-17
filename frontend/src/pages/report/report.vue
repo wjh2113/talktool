@@ -391,7 +391,7 @@ onUnload(() => clearTimeout(pollTimer))
 .said-label { flex-shrink: 0; font-size: 22rpx; color: $tt-text-3; background: #F0F2F5; border-radius: 8rpx; padding: 2rpx 10rpx; margin: 4rpx 14rpx 0 0; height: 34rpx; line-height: 34rpx; }
 .said-txt { flex: 1; font-size: 27rpx; line-height: 1.65; color: #4A4F57; }
 .turn-metric { display: block; font-size: 22rpx; color: $tt-text-3; margin: 8rpx 0 0 72rpx; }
-.better { margin-top: 18rpx; padding: 22rpx 24rpx; border-radius: 16rpx; background: #F4F9FF; border: 1rpx solid #DCEBFC; }
+.better { margin-top: 18rpx; padding: 22rpx 24rpx; border-radius: 16rpx; background: $tt-soft; border: 1rpx solid $tt-soft-border; }
 .better-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10rpx; }
 .better-label { font-size: 24rpx; color: $tt-primary; font-weight: 600; }
 .better-txt { display: block; font-size: 29rpx; line-height: 1.7; color: $tt-text; }

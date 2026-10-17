@@ -197,7 +197,7 @@ onPullDownRefresh(async () => {
 .label { display: block; font-size: 23rpx; color: $tt-text-2; margin-bottom: 8rpx; }
 .input { height: 76rpx; padding: 0 20rpx; border-radius: 12rpx; background: #F7F9FC; border: 1rpx solid #E3E7ED; font-size: 28rpx; }
 .gen { margin-top: 28rpx; }
-.fresh { margin-top: 28rpx; padding: 24rpx; border-radius: 16rpx; background: #F4F9FF; border: 1rpx solid #DCEBFC; }
+.fresh { margin-top: 28rpx; padding: 24rpx; border-radius: 16rpx; background: $tt-soft; border: 1rpx solid $tt-soft-border; }
 .fresh-head { display: flex; justify-content: space-between; margin-bottom: 14rpx; }
 .fresh-title { font-size: 26rpx; font-weight: 600; }
 .fresh-code { display: inline-block; font-family: Menlo, monospace; font-size: 32rpx; letter-spacing: 4rpx; margin: 6rpx 24rpx 6rpx 0; color: $tt-primary; }

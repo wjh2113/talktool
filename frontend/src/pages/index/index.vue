@@ -111,7 +111,7 @@ onShow(load)
 .hero {
   border-radius: 28rpx;
   padding: 44rpx 40rpx 36rpx;
-  background: linear-gradient(135deg, #5AAEFA 0%, #3B85E0 100%);
+  background: linear-gradient(135deg, #1AA897 0%, #0B6B5F 100%);
   color: #fff;
   display: flex;
   flex-direction: column;

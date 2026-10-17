@@ -183,7 +183,7 @@ onLoad(async (q) => {
 .fw-name { flex: 1; font-size: 31rpx; font-weight: 700; }
 .fw-go { color: $tt-text-3; font-size: 24rpx; }
 .steps { display: flex; flex-wrap: wrap; gap: 12rpx; margin-top: 20rpx; }
-.step { background: #EEF6FF; color: $tt-primary; font-size: 24rpx; padding: 8rpx 18rpx; border-radius: 8rpx; }
+.step { background: $tt-soft; color: $tt-primary; font-size: 24rpx; padding: 8rpx 18rpx; border-radius: 8rpx; }
 .example { margin-top: 20rpx; background: #F7F9FC; border-radius: 12rpx; padding: 20rpx 24rpx; display: flex; flex-direction: column; }
 .ex-k { color: $tt-text-3; font-size: 22rpx; margin-bottom: 8rpx; }
 .ex-v { color: #333; font-size: 28rpx; line-height: 1.7; }

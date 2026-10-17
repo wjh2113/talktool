@@ -111,7 +111,7 @@ onLoad((q) => {
 <style lang="scss" scoped>
 .page { min-height: 100vh; background: $tt-bg; }
 .head {
-  background: linear-gradient(135deg, #4A9BE8 0%, #3B7BE8 100%);
+  background: linear-gradient(135deg, #1AA897 0%, #0B6B5F 100%);
   padding: 44rpx 40rpx 52rpx; display: flex; flex-direction: column;
 }
 .cat { color: rgba(255, 255, 255, 0.8); font-size: 24rpx; }
@@ -128,7 +128,7 @@ onLoad((q) => {
 .step-body { flex: 1; display: flex; flex-direction: column; }
 .step-name { font-size: 30rpx; font-weight: 700; }
 .step-desc { font-size: 27rpx; color: $tt-text-2; line-height: 1.7; margin-top: 6rpx; }
-.example { background: #FFFDF5; display: flex; flex-direction: column; }
+.example { background: $tt-soft; display: flex; flex-direction: column; }
 .act { color: $tt-primary; font-size: 26rpx; margin-top: 20rpx; }
 .line { display: flex; align-items: flex-start; padding: 6rpx 0; }
 .x { color: #F56C6C; margin-right: 14rpx; font-size: 26rpx; line-height: 1.85; }

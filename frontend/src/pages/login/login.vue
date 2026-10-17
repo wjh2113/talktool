@@ -100,7 +100,7 @@ onLoad((q) => {
 </script>
 
 <style lang="scss" scoped>
-.page { min-height: 100vh; background: linear-gradient(180deg, #E8F4FE 0%, $tt-bg 45%); padding: 0 40rpx 60rpx; box-sizing: border-box; }
+.page { min-height: 100vh; background: linear-gradient(180deg, $tt-tag-bg 0%, $tt-bg 45%); padding: 0 40rpx 60rpx; box-sizing: border-box; }
 .brand { display: flex; flex-direction: column; align-items: center; margin-bottom: 56rpx; }
 .brand-title { font-size: 56rpx; font-weight: 800; color: $tt-text; letter-spacing: 4rpx; }
 .brand-sub { font-size: 26rpx; color: $tt-text-2; margin-top: 14rpx; }

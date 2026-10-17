@@ -100,11 +100,11 @@
     "navigationBarTextStyle": "black",
     "navigationBarTitleText": "沟通训练",
     "navigationBarBackgroundColor": "#FFFFFF",
-    "backgroundColor": "#F3F6FA"
+    "backgroundColor": "#F1F6F4"
   },
   "tabBar": {
-    "color": "#999999",
-    "selectedColor": "#3B9DF8",
+    "color": "#8A9691",
+    "selectedColor": "#0D8A7B",
     "backgroundColor": "#FFFFFF",
     "borderStyle": "white",
     "list": [
