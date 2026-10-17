@@ -91,6 +91,51 @@ export function request(url, { method = 'GET', data, silent = false, timeout = 9
   })
 }
 
+/** 通用 multipart 上传（管理员导入等）。H5 传 File/Blob；其它端传本地路径。 */
+export function uploadForm(url, { file, filePath, name = 'file', fields = {}, timeout = 120000 } = {}) {
+  const fail = (status, detail, fallback) => {
+    if (status === 401) handleUnauthorized(detail)
+    const e = new Error(detail || fallback)
+    e.status = status
+    return e
+  }
+  // #ifdef H5
+  const fd = new FormData()
+  fd.append(name, file)
+  Object.keys(fields).forEach((k) => {
+    if (fields[k] !== undefined && fields[k] !== null) fd.append(k, String(fields[k]))
+  })
+  return fetch(API_BASE + url, { method: 'POST', body: fd, headers: authHeader() }).then(async (r) => {
+    const js = await r.json().catch(() => ({}))
+    if (!r.ok) throw fail(r.status, js.detail, `上传失败（${r.status}）`)
+    return js
+  })
+  // #endif
+  // #ifndef H5
+  return new Promise((resolve, reject) => {
+    const formData = {}
+    Object.keys(fields).forEach((k) => {
+      if (fields[k] !== undefined && fields[k] !== null) formData[k] = String(fields[k])
+    })
+    uni.uploadFile({
+      url: API_BASE + url,
+      filePath,
+      name,
+      formData,
+      timeout,
+      header: authHeader(),
+      success(res) {
+        let js = {}
+        try { js = JSON.parse(res.data) } catch (e) {}
+        if (res.statusCode >= 200 && res.statusCode < 300) resolve(js)
+        else reject(fail(res.statusCode, js.detail, `上传失败（${res.statusCode}）`))
+      },
+      fail: (err) => reject(err)
+    })
+  })
+  // #endif
+}
+
 /** 上传一段录音。H5：PCM ArrayBuffer；小程序：录音临时文件路径 */
 export function uploadAudio(url, rec, extra = {}) {
   const form = { format: rec.format, sample_rate: String(rec.sampleRate || 16000) }

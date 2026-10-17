@@ -3,6 +3,7 @@
     <view class="tabs">
       <view class="tab" :class="{ on: tab === 'invites' }" @tap="tab = 'invites'">邀请码</view>
       <view class="tab" :class="{ on: tab === 'users' }" @tap="switchUsers">用户（{{ users.length || '…' }}）</view>
+      <view class="tab" :class="{ on: tab === 'catalog' }" @tap="tab = 'catalog'">场景导入</view>
     </view>
 
     <!-- 邀请码 -->
@@ -52,6 +53,28 @@
       <view v-if="!invites.length" class="empty muted">还没有邀请码</view>
     </block>
 
+    <!-- 场景导入 -->
+    <block v-else-if="tab === 'catalog'">
+      <view class="card form">
+        <text class="block-title">导入场景库 / 表达框架</text>
+        <text class="hint">支持单个 .md，或 .zip（内含多个 md）。默认按标题更新已有公共场景，不会删除库里多出来的内容。</text>
+        <text class="label">导入模式</text>
+        <view class="mode-row">
+          <view class="mode" :class="{ on: importMode === 'upsert' }" @tap="importMode = 'upsert'">更新或新增</view>
+          <view class="mode" :class="{ on: importMode === 'add_only' }" @tap="importMode = 'add_only'">仅新增</view>
+        </view>
+        <view class="btn-primary gen" :class="{ dim: importing }" @tap="pickImport">{{ importing ? '导入中…' : '选择文件并导入' }}</view>
+        <text class="hint linkish" @tap="copyPromptHint">复制「发给大模型的整理提示词」说明路径</text>
+      </view>
+      <view v-if="importResult" class="card item">
+        <text class="uname">导入结果</text>
+        <text class="meta">{{ importResult.summary }}</text>
+        <text class="meta">模式 {{ importResult.mode }} · 文件 {{ (importResult.files || []).map((f) => f.name + '(' + f.kind + ')').join('、') || '—' }}</text>
+        <text class="meta">框架 +{{ importResult.frameworks && importResult.frameworks.added }} / 改 {{ importResult.frameworks && importResult.frameworks.updated }}</text>
+        <text class="meta">训练 +{{ importResult.catalog && importResult.catalog.drills_added }} / 改 {{ importResult.catalog && importResult.catalog.drills_updated }} / 跳过 {{ importResult.catalog && importResult.catalog.drills_skipped }}</text>
+      </view>
+    </block>
+
     <!-- 用户 -->
     <block v-else>
       <view v-for="u in users" :key="u.id" class="card item">
@@ -85,6 +108,9 @@ const users = ref([])
 const fresh = ref([])
 const me = ref(getCurrentUser() || {})
 const gen = reactive({ count: '5', max_uses: '1', expires_days: '30', note: '' })
+const importMode = ref('upsert')
+const importing = ref(false)
+const importResult = ref(null)
 let canLink = false
 // #ifdef H5
 canLink = true
@@ -99,6 +125,51 @@ async function loadUsers() {
 function switchUsers() {
   tab.value = 'users'
   loadUsers()
+}
+
+function copyPromptHint() {
+  copy('docs/场景库导入-发给大模型的提示词.md（仓库内）', '路径已复制')
+}
+
+function pickImport() {
+  if (importing.value) return
+  // #ifdef H5
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = '.md,.markdown,.txt,.zip,text/markdown,application/zip'
+  input.onchange = async () => {
+    const f = input.files && input.files[0]
+    if (!f) return
+    await doImport(f)
+  }
+  input.click()
+  // #endif
+  // #ifndef H5
+  uni.chooseMessageFile({
+    count: 1,
+    type: 'file',
+    extension: ['md', 'markdown', 'txt', 'zip'],
+    success: async (res) => {
+      const path = res.tempFiles && res.tempFiles[0] && res.tempFiles[0].path
+      if (!path) return
+      await doImport(path)
+    }
+  })
+  // #endif
+}
+
+async function doImport(fileOrPath) {
+  importing.value = true
+  importResult.value = null
+  try {
+    const res = await api.adminCatalogImport(fileOrPath, importMode.value)
+    importResult.value = res
+    uni.showToast({ title: res.summary || '导入完成', icon: 'none', duration: 3000 })
+  } catch (e) {
+    /* toast 已由 request 处理 */
+  } finally {
+    importing.value = false
+  }
 }
 
 async function createInvites() {
@@ -176,7 +247,8 @@ onLoad(() => {
 })
 onPullDownRefresh(async () => {
   try {
-    await (tab.value === 'invites' ? loadInvites() : loadUsers())
+    if (tab.value === 'invites') await loadInvites()
+    else if (tab.value === 'users') await loadUsers()
   } finally {
     uni.stopPullDownRefresh()
   }
@@ -185,18 +257,26 @@ onPullDownRefresh(async () => {
 
 <style lang="scss" scoped>
 .page { min-height: 100vh; background: $tt-bg; padding: 24rpx 32rpx 60rpx; box-sizing: border-box; }
-.tabs { display: flex; gap: 18rpx; margin-bottom: 24rpx; }
+.tabs { display: flex; gap: 18rpx; margin-bottom: 24rpx; flex-wrap: wrap; }
 .tab {
   padding: 0 32rpx; height: 72rpx; line-height: 72rpx; border-radius: 14rpx; background: #fff; border: 1rpx solid #E3E7ED; font-size: 28rpx;
   &.on { background: $tt-primary; border-color: $tt-primary; color: #fff; font-weight: 600; }
 }
 .form { padding: 32rpx; margin-bottom: 28rpx; }
 .block-title { display: block; font-size: 30rpx; font-weight: 700; margin-bottom: 20rpx; }
+.hint { display: block; font-size: 24rpx; color: $tt-text-3; line-height: 1.6; margin-bottom: 20rpx; }
+.linkish { color: $tt-primary; margin-top: 16rpx; }
+.mode-row { display: flex; gap: 16rpx; margin-bottom: 8rpx; }
+.mode {
+  flex: 1; text-align: center; height: 72rpx; line-height: 72rpx; border-radius: 12rpx;
+  background: #F7F9FC; border: 1rpx solid #E3E7ED; font-size: 26rpx; color: $tt-text-2;
+  &.on { background: $tt-soft; border-color: $tt-soft-border; color: $tt-primary; font-weight: 600; }
+}
 .row { display: flex; gap: 16rpx; margin-bottom: 16rpx; }
 .cell { flex: 1; }
 .label { display: block; font-size: 23rpx; color: $tt-text-2; margin-bottom: 8rpx; }
 .input { height: 76rpx; padding: 0 20rpx; border-radius: 12rpx; background: #F7F9FC; border: 1rpx solid #E3E7ED; font-size: 28rpx; }
-.gen { margin-top: 28rpx; }
+.gen { margin-top: 28rpx; &.dim { opacity: 0.55; } }
 .fresh { margin-top: 28rpx; padding: 24rpx; border-radius: 16rpx; background: $tt-soft; border: 1rpx solid $tt-soft-border; }
 .fresh-head { display: flex; justify-content: space-between; margin-bottom: 14rpx; }
 .fresh-title { font-size: 26rpx; font-weight: 600; }

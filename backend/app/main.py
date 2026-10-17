@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from . import config
 from .db import init_db
-from .services import auth, frameworks, library, maintenance, practice
+from .services import auth, catalog_import, frameworks, library, maintenance, practice
 from .services import sessions as svc
 from .services.gateway import GatewayError
 
@@ -192,6 +192,17 @@ def admin_user_status(user_id: int, body: StatusIn, admin: dict = Depends(admin_
 @app.post("/api/admin/users/{user_id}/reset-password")
 def admin_reset_password(user_id: int, admin: dict = Depends(admin_user)):
     return auth.reset_user_password(user_id)
+
+
+@app.post("/api/admin/catalog/import")
+async def admin_catalog_import(
+    file: UploadFile = File(...),
+    mode: str = Form("upsert"),
+    admin: dict = Depends(admin_user),
+):
+    """导入场景库 / 表达框架：.md 或 .zip（内含多个 md）。mode=upsert|add_only。"""
+    data = await file.read()
+    return catalog_import.import_bytes(data, file.filename or "upload.md", mode=mode)
 
 
 # ---------------- 内容 ----------------

@@ -1,4 +1,4 @@
-import { request, uploadAudio } from './request'
+import { request, uploadAudio, uploadForm } from './request'
 
 export const api = {
   // 账号
@@ -18,6 +18,14 @@ export const api = {
   adminUsers: () => request('/api/admin/users'),
   adminSetUserStatus: (id, status) => request(`/api/admin/users/${id}/status`, { method: 'POST', data: { status } }),
   adminResetPassword: (id) => request(`/api/admin/users/${id}/reset-password`, { method: 'POST' }),
+  adminCatalogImport: (fileOrPath, mode = 'upsert') => {
+    // #ifdef H5
+    return uploadForm('/api/admin/catalog/import', { file: fileOrPath, fields: { mode } })
+    // #endif
+    // #ifndef H5
+    return uploadForm('/api/admin/catalog/import', { filePath: fileOrPath, fields: { mode } })
+    // #endif
+  },
 
   health: () => request('/api/health', { silent: true }),
   ping: () => request('/api/ping', { silent: true, timeout: 5000 }),
