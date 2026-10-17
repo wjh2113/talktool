@@ -62,10 +62,14 @@ cd frontend
 npm install
 npm run dev:h5            # 浏览器打开 http://localhost:5173
 npm run dev:mp-weixin     # 用微信开发者工具导入 frontend/dist/dev/mp-weixin
+npm run build:app         # 生成 App 资源（打 APK 前先跑；见下方「打包 App」）
 ```
 
 - **H5**：`/api` 和 `/media` 由 vite 代理到 `127.0.0.1:8000`。麦克风要求 HTTPS 或 localhost，电脑浏览器直接用 localhost 即可；手机上测要走 HTTPS 隧道（如 `cloudflared tunnel --url http://localhost:5173`）。
 - **小程序**：新建 `frontend/.env`，写入 `VITE_API_BASE=http://你的电脑局域网IP:8000`。开发者工具里勾选“不校验合法域名”；真机/上线需要 HTTPS 域名，并在小程序后台配置隐私协议（麦克风）。
+- **打包 App（对齐小树学堂）**：生产 API 在 `frontend/.env.production`（`VITE_API_BASE=https://talk.aidigitcloud.cn`）。先到 [DCloud 开发者中心](https://dev.dcloud.net.cn/) 创建应用，把 `__UNI__xxxxxx` 填进 `frontend/src/manifest.json` 的 `appid`。然后二选一：
+  - **云打包（推荐）**：HBuilderX 打开 `frontend` → 发行 → 原生 App-云打包 → Android，下载 `.apk` 安装。
+  - **本地离线 SDK**：步骤与自检见 [`scripts/build-android-local.md`](scripts/build-android-local.md)、`./scripts/check-android-local.sh`（与小树同一套流程，不要照搬 Capacitor）。
 - 如果 `npm install` 报 `@dcloudio` 版本问题：执行 `npx @dcloudio/uvm@latest` 对齐版本，或用 `npx degit dcloudio/uni-preset-vue#vite` 生成官方模板后把 `src/` 拷进去。
 
 ## 3. 网关对接（AIapiMgr）

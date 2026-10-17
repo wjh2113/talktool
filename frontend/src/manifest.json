@@ -1,19 +1,62 @@
 {
-  "name": "沟通训练",
+  "name": "沟通表达演练场",
   "appid": "",
-  "description": "AI 语音沟通训练",
+  "description": "AI 语音沟通训练：场景对练、表达框架、报告复盘",
   "versionName": "0.1.0",
   "versionCode": "100",
+  "transformPx": false,
   "vueVersion": "3",
+  "app-plus": {
+    "usingComponents": true,
+    "nvueStyleCompiler": "uni-app",
+    "compilerVersion": 3,
+    "splashscreen": {
+      "alwaysShowBeforeRender": true,
+      "waiting": true,
+      "autoclose": true,
+      "delay": 0
+    },
+    "modules": {},
+    "distribute": {
+      "android": {
+        "permissions": [
+          "<uses-permission android:name=\"android.permission.RECORD_AUDIO\"/>",
+          "<uses-permission android:name=\"android.permission.MODIFY_AUDIO_SETTINGS\"/>",
+          "<uses-permission android:name=\"android.permission.INTERNET\"/>",
+          "<uses-permission android:name=\"android.permission.ACCESS_NETWORK_STATE\"/>",
+          "<uses-permission android:name=\"android.permission.READ_EXTERNAL_STORAGE\"/>",
+          "<uses-permission android:name=\"android.permission.WRITE_EXTERNAL_STORAGE\"/>"
+        ]
+      },
+      "ios": {
+        "privacyDescription": {
+          "NSMicrophoneUsageDescription": "用于语音对练、跟读评测"
+        },
+        "idiom": "phone",
+        "dSYMs": false
+      },
+      "sdkConfigs": {}
+    }
+  },
   "h5": {
-    "title": "沟通训练",
-    "router": { "mode": "hash" }
+    "title": "沟通表达演练场",
+    "router": {
+      "mode": "hash",
+      "base": "./"
+    }
   },
   "mp-weixin": {
     "appid": "",
-    "setting": { "urlCheck": false, "es6": true, "minified": true },
+    "setting": {
+      "urlCheck": false,
+      "es6": true,
+      "minified": true
+    },
     "usingComponents": true,
     "lazyCodeLoading": "requiredComponents",
     "__usePrivacyCheck__": true
+  },
+  "uniStatistics": {
+    "enable": false
   }
 }
