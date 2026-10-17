@@ -160,8 +160,21 @@ export function createRecorder(cb = {}) {
   }
 }
 
+// CosyVoice 合成音偏轻；对齐小树学堂，经 GainNode 抬约 +5dB
+const PLAYBACK_GAIN = 1.8
 let currentSource = null
+let gainNode = null
 let playGen = 0
+
+function getGain(ctx) {
+  if (!gainNode) {
+    gainNode = ctx.createGain()
+    gainNode.connect(ctx.destination)
+  }
+  gainNode.gain.value = PLAYBACK_GAIN
+  return gainNode
+}
+
 export function playAudio(url) {
   return new Promise(async (resolve) => {
     stopAudio()
@@ -175,7 +188,7 @@ export function playAudio(url) {
       if (my !== playGen) return resolve(false)
       const src = ctx.createBufferSource()
       src.buffer = audio
-      src.connect(ctx.destination)
+      src.connect(getGain(ctx))
       src.onended = () => { if (currentSource === src) currentSource = null; resolve(true) }
       currentSource = src
       src.start(0)
@@ -299,6 +312,7 @@ export function playAudio(url) {
     p.onEnded(() => done(true))
     p.onError((e) => { console.warn('play error', e); done(false) })
     p.onStop(() => done(true))
+    p.volume = 1 // InnerAudio 上限 1，无法像 H5 再抬增益
     p.src = url
     p.play()
   })
