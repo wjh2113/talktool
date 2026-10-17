@@ -110,6 +110,10 @@ class ProfileIn(BaseModel):
     nickname: str
 
 
+class TtsGenderIn(BaseModel):
+    tts_gender: str  # male | female
+
+
 @app.post("/api/auth/login")
 def login(body: LoginIn, request: Request):
     return auth.login(body.username, body.password, client_ip(request))
@@ -140,6 +144,11 @@ def change_password(body: PasswordIn, user: dict = Depends(current_user)):
 @app.put("/api/auth/profile")
 def update_profile(body: ProfileIn, user: dict = Depends(current_user)):
     return auth.update_profile(user["id"], body.nickname)
+
+
+@app.put("/api/auth/tts-gender")
+def update_tts_gender(body: TtsGenderIn, user: dict = Depends(current_user)):
+    return auth.update_tts_gender(user["id"], body.tts_gender)
 
 
 # ---------------- 管理员 ----------------
@@ -281,11 +290,16 @@ def session_detail(session_id: int, user: dict = Depends(current_user)):
 
 class TtsIn(BaseModel):
     text: str
+    preview: bool = False  # 设置页试听固定文案
 
 
 @app.post("/api/tts")
 async def tts(body: TtsIn, user: dict = Depends(current_user)):
-    return await svc.tts(body.text, user["uid"])
+    text = body.text
+    preview = bool(body.preview)
+    if preview:
+        text = config.TTS_PREVIEW_TEXT
+    return await svc.tts(text, user["uid"], preview=preview)
 
 
 @app.post("/api/pronounce")

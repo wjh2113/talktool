@@ -218,7 +218,9 @@ async def test_limits_and_reports(me, drill_id):
     assert "朗读" in await aexpect(quota.QuotaExceeded, svc.tts("还没合成过的一句", U))
     # 命中缓存的不计数：造一个缓存文件
     import hashlib
-    name = "t_" + hashlib.sha1(f"{config.TTS_VOICE}|{config.TTS_SPEED}|我的看法有两点".encode()).hexdigest()[:20] + ".mp3"
+    from app.services.voice import voice_for_gender
+    voice = voice_for_gender("male")
+    name = "t_" + hashlib.sha1(f"{voice}|{config.TTS_SPEED}|我的看法有两点".encode()).hexdigest()[:20] + ".mp3"
     (config.AUDIO_DIR / name).write_bytes(b"ID3")
     assert (await svc.tts("我的看法有两点", U))["audio_url"].endswith(name)
     config.MOCK = True

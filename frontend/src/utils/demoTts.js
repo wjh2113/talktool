@@ -6,11 +6,17 @@
  */
 import { api } from './api'
 import { absUrl } from './request'
+import { getTtsGender } from './ttsGender'
 import { playAudio, stopAudio, unlockAudio } from './voice'
 
-const audioCache = new Map() // text -> Promise<url|null>
+const audioCache = new Map() // `${gender}|${text}` -> Promise<url|null>
 const AUDIO_CACHE_MAX = 40
 let seq = 0
+
+/** 切换男声/女声后清掉本页缓存，避免播错音色 */
+export function clearDemoTtsCache() {
+  audioCache.clear()
+}
 
 /** 切成短句；第一段尽快出声，之后略长。 */
 export function splitSentences(text, max = 120, firstMax = 60) {
@@ -49,7 +55,7 @@ export function splitSentences(text, max = 120, firstMax = 60) {
 }
 
 function getAudioUrl(text) {
-  const key = text
+  const key = `${getTtsGender()}|${text}`
   let p = audioCache.get(key)
   if (p) {
     audioCache.delete(key)

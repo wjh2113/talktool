@@ -96,6 +96,7 @@ CREATE TABLE IF NOT EXISTS app_user (
     role           TEXT    NOT NULL DEFAULT 'user' CHECK (role IN ('admin','user')),
     status         TEXT    NOT NULL DEFAULT 'active' CHECK (status IN ('active','disabled')),
     invite_code    TEXT,                           -- 注册时用的邀请码
+    tts_gender     TEXT    NOT NULL DEFAULT 'male' CHECK (tts_gender IN ('male','female')),  -- 示范/对练音色
     created_at     TEXT    NOT NULL,
     last_login_at  TEXT
 );

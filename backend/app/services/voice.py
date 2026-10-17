@@ -70,9 +70,17 @@ class VoiceProvider:
     async def reply(self, drill: dict, transcript: list, session_id=None) -> str:
         raise NotImplementedError
 
-    async def synthesize(self, text: str):
+    async def synthesize(self, text: str, voice: str = None):
         """返回 mp3 bytes；返回 None 表示无音频（前端会按文字长度模拟播放时长）。"""
         raise NotImplementedError
+
+
+def voice_for_gender(gender: str = None) -> str:
+    """male / female → 网关 CosyVoice 音色 id。"""
+    g = (gender or "male").lower()
+    if g == "female":
+        return config.TTS_VOICE_FEMALE or "FunAudioLLM/CosyVoice2-0.5B:anna"
+    return config.TTS_VOICE_MALE or config.TTS_VOICE
 
 
 class PipelineVoiceProvider(VoiceProvider):
@@ -98,8 +106,8 @@ class PipelineVoiceProvider(VoiceProvider):
         return await gateway.chat(msgs, max_tokens=config.REPLY_MAX_TOKENS, idempotency_key=key,
                                   max_cost=config.MAX_COST_REPLY)
 
-    async def synthesize(self, text):
-        return await gateway.speech(text)
+    async def synthesize(self, text, voice=None):
+        return await gateway.speech(text, voice=voice)
 
 
 MOCK_USER_LINES = [
@@ -129,7 +137,7 @@ class MockVoiceProvider(VoiceProvider):
         user_turns = sum(1 for t in transcript if t["role"] == "user")
         return MOCK_AI_LINES[min(user_turns - 1, len(MOCK_AI_LINES) - 1)] if user_turns else MOCK_AI_LINES[0]
 
-    async def synthesize(self, text):
+    async def synthesize(self, text, voice=None):
         return None
 
 

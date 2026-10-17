@@ -85,9 +85,12 @@ def issue_token(conn, user_id: int) -> str:
 
 
 def public_user(u: dict) -> dict:
+    gender = (u.get("tts_gender") or "male").lower()
+    if gender not in ("male", "female"):
+        gender = "male"
     return {"id": u["id"], "uid": account_uid(u["id"]), "username": u["username"],
             "nickname": u["nickname"] or u["username"], "role": u["role"], "status": u["status"],
-            "created_at": u["created_at"]}
+            "tts_gender": gender, "created_at": u["created_at"]}
 
 
 def user_from_token(token: str) -> dict:
@@ -200,6 +203,30 @@ def update_profile(user_id: int, nickname: str) -> dict:
     with get_conn() as conn:
         conn.execute("UPDATE app_user SET nickname = ? WHERE id = ?", ((nickname or "").strip()[:20], user_id))
         return public_user(row_to_dict(conn.execute("SELECT * FROM app_user WHERE id = ?", (user_id,)).fetchone()))
+
+
+def update_tts_gender(user_id: int, gender: str) -> dict:
+    """示范朗读 / 对练 AI 音色：male 男声 | female 女声。"""
+    gender = (gender or "").strip().lower()
+    if gender not in ("male", "female"):
+        raise InvalidInput("请选择男声或女声")
+    with get_conn() as conn:
+        conn.execute("UPDATE app_user SET tts_gender = ? WHERE id = ?", (gender, user_id))
+        return public_user(row_to_dict(conn.execute("SELECT * FROM app_user WHERE id = ?", (user_id,)).fetchone()))
+
+
+def tts_gender_of(uid: str) -> str:
+    """业务 user_id（acc_N）→ male/female。"""
+    if not uid or not str(uid).startswith("acc_"):
+        return "male"
+    try:
+        aid = int(str(uid).split("_", 1)[1])
+    except (ValueError, IndexError):
+        return "male"
+    with get_conn() as conn:
+        row = conn.execute("SELECT tts_gender FROM app_user WHERE id = ?", (aid,)).fetchone()
+    g = (row["tts_gender"] if row else None) or "male"
+    return g if g in ("male", "female") else "male"
 
 
 # ---------------- 管理员 ----------------

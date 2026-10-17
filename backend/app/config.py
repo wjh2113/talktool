@@ -38,8 +38,13 @@ PRONOUNCE_CAPABILITY = _env("PRONOUNCE_CAPABILITY", "pronunciation")
 CUSTOM_CAPABILITY = _env("CUSTOM_CAPABILITY", "quality-chat")    # 自定义场景生成
 LLM_TEMPERATURE = float(_env("LLM_TEMPERATURE", "0.8"))
 ASR_LANGUAGE = _env("ASR_LANGUAGE", "zh")
-TTS_VOICE = _env("TTS_VOICE", "FunAudioLLM/CosyVoice2-0.5B:alex")  # alex/anna/bella/benjamin/charles/claire/david/diana
+# CosyVoice 音色：alex/anna/bella/benjamin/charles/claire/david/diana
+TTS_VOICE = _env("TTS_VOICE", "FunAudioLLM/CosyVoice2-0.5B:alex")  # 兼容旧配置；男声默认回退到它
+_male = _env("TTS_VOICE_MALE", "")
+TTS_VOICE_MALE = _male or None
+TTS_VOICE_FEMALE = _env("TTS_VOICE_FEMALE", "FunAudioLLM/CosyVoice2-0.5B:anna")
 TTS_SPEED = float(_env("TTS_SPEED", "1.0"))
+TTS_PREVIEW_TEXT = "你好，我是沟通表达演练场。接下来我会用这个声音给你示范。"
 
 # 语音方案：pipeline = 方案B（ASR+LLM+TTS，已实现）；realtime = 方案A（预留）
 VOICE_PROVIDER = _env("VOICE_PROVIDER", "pipeline")

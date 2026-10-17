@@ -9,6 +9,7 @@ export const api = {
   changePassword: (old_password, new_password) =>
     request('/api/auth/password', { method: 'POST', data: { old_password, new_password } }),
   updateProfile: (nickname) => request('/api/auth/profile', { method: 'PUT', data: { nickname } }),
+  updateTtsGender: (tts_gender) => request('/api/auth/tts-gender', { method: 'PUT', data: { tts_gender } }),
 
   // 管理员
   adminInvites: () => request('/api/admin/invites'),
@@ -46,7 +47,7 @@ export const api = {
   stats: () => request('/api/stats', { silent: true }),
 
   // 示范朗读 & 跟读评测
-  tts: (text) => request('/api/tts', { method: 'POST', data: { text } }),
+  tts: (text, opts = {}) => request('/api/tts', { method: 'POST', data: { text, preview: !!opts.preview } }),
   pronounce: (rec, text, noteId) => uploadAudio('/api/pronounce', rec, { text, note_id: noteId }),
 
   // 练习本

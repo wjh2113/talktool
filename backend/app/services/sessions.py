@@ -12,7 +12,8 @@ from .. import config
 from ..db import dumps, get_conn, loads, now, now_str, parse_time, row_to_dict, TIME_FMT
 from . import metrics as metrics_svc
 from . import report as report_svc
-from .voice import get_provider
+from . import auth as auth_svc
+from .voice import get_provider, voice_for_gender
 
 log = logging.getLogger("talktool")
 
@@ -128,10 +129,11 @@ def _audio_url(name: str) -> str:
     return f"{config.PUBLIC_BASE_URL}/media/audio/{name}"
 
 
-async def _synthesize(provider, session_id, text: str, cache: bool = False):
-    """合成语音并保存为文件；失败时不阻断（前端退化为按时长模拟）。cache=True 时同一文本复用文件。"""
+async def _synthesize(provider, session_id, text: str, cache: bool = False, voice: str = None):
+    """合成语音并保存为文件；失败时不阻断（前端退化为按时长模拟）。cache=True 时同一文本+音色复用文件。"""
+    voice = voice or voice_for_gender("male")
     if cache:
-        name = "t_" + hashlib.sha1(f"{config.TTS_VOICE}|{config.TTS_SPEED}|{text}".encode()).hexdigest()[:20] + ".mp3"
+        name = "t_" + hashlib.sha1(f"{voice}|{config.TTS_SPEED}|{text}".encode()).hexdigest()[:20] + ".mp3"
         path = config.AUDIO_DIR / name
         if path.exists():
             try:
@@ -142,7 +144,7 @@ async def _synthesize(provider, session_id, text: str, cache: bool = False):
     else:
         name = f"s{session_id}_{uuid.uuid4().hex[:10]}.mp3"
     try:
-        audio = await provider.synthesize(text)
+        audio = await provider.synthesize(text, voice=voice)
     except Exception as e:  # noqa: BLE001
         log.warning("TTS 失败：%s", e)
         return None
@@ -200,25 +202,32 @@ def _tts_allowed(user_id: str, text: str) -> bool:
     return False
 
 
-def _tts_cached(text: str) -> bool:
-    name = "t_" + hashlib.sha1(f"{config.TTS_VOICE}|{config.TTS_SPEED}|{text}".encode()).hexdigest()[:20] + ".mp3"
+def _tts_cached(text: str, voice: str) -> bool:
+    name = "t_" + hashlib.sha1(f"{voice}|{config.TTS_SPEED}|{text}".encode()).hexdigest()[:20] + ".mp3"
     return (config.AUDIO_DIR / name).exists()
 
 
-async def tts(text: str, user_id: str = None) -> dict:
-    """示范话术朗读（练习本 / 报告逐句示范用），按文本缓存。"""
+async def tts(text: str, user_id: str = None, *, preview: bool = False) -> dict:
+    """示范话术朗读（练习本 / 报告逐句示范用），按文本+音色缓存。"""
     text = (text or "").strip()
     if not text:
         raise BadRequest("文本为空")
     if len(text) > 500:
         raise BadRequest("文本过长（最多 500 字）")
+    gender = auth_svc.tts_gender_of(user_id) if user_id else "male"
+    voice = voice_for_gender(gender)
     provider = get_provider()
-    if user_id is not None and not _tts_cached(text):
-        if not _tts_allowed(user_id, text):
+    is_preview = preview and text == config.TTS_PREVIEW_TEXT
+    if user_id is not None and not _tts_cached(text, voice):
+        if not is_preview and not _tts_allowed(user_id, text):
             raise BadRequest("只能朗读示范话术")
         if not provider.mock:
             quota.hit(user_id, "tts", config.DAILY_TTS_LIMIT, "今天的示范朗读次数已用完，明天再来吧")
-    return {"audio_url": await _synthesize(provider, None, text, cache=True), "mock": provider.mock}
+    return {
+        "audio_url": await _synthesize(provider, None, text, cache=True, voice=voice),
+        "mock": provider.mock,
+        "tts_gender": gender,
+    }
 
 
 # ---------------- 训练会话 ----------------
@@ -272,8 +281,9 @@ async def start_session(user_id: str, drill_id: int, ip: str = None) -> dict:
     with get_conn() as conn:
         _append(conn, sid, "ai", text)
     t1 = time.perf_counter()
-    # 固定开场白按文字缓存：同一场景只合成一次
-    audio_url = await _synthesize(provider, sid, text, cache=bool(drill.get("opening_line")))
+    voice = voice_for_gender(auth_svc.tts_gender_of(user_id))
+    # 固定开场白按文字+音色缓存：同一场景同一音色只合成一次
+    audio_url = await _synthesize(provider, sid, text, cache=bool(drill.get("opening_line")), voice=voice)
     tts_ms = int((time.perf_counter() - t1) * 1000)
     return {
         "session_id": sid,
@@ -322,7 +332,8 @@ async def run_turn(user_id: str, session_id: int, audio: bytes, fmt: str, sample
     with get_conn() as conn:
         _append(conn, session_id, "ai", ai_text)
     t2 = time.perf_counter()
-    audio_url = await _synthesize(provider, session_id, ai_text)
+    voice = voice_for_gender(auth_svc.tts_gender_of(user_id))
+    audio_url = await _synthesize(provider, session_id, ai_text, voice=voice)
     tts_ms = int((time.perf_counter() - t2) * 1000)
     return {
         "empty": False,

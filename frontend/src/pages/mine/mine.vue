@@ -38,6 +38,25 @@
       </view>
     </view>
 
+    <view class="card menu voice-card">
+      <view class="sec-title">音色设置</view>
+      <text class="sec-sub">示范朗读、对练里 AI 说话的声音</text>
+      <view class="voice-row">
+        <view
+          v-for="opt in genderOpts"
+          :key="opt.value"
+          class="chip"
+          :class="{ on: ttsGender === opt.value }"
+          @tap="setGender(opt.value)"
+        >
+          <text>{{ opt.label }}</text>
+        </view>
+      </view>
+      <view class="preview" @tap="previewVoice">
+        <text>{{ previewing ? '■ 停止试听' : '▶ 试听当前音色' }}</text>
+      </view>
+    </view>
+
     <view class="btn-plain logout" @tap="logout">退出登录</view>
     <text class="foot muted">训练结果仅反映单次练习表现，仅供参考</text>
   </view>
@@ -45,14 +64,24 @@
 
 <script setup>
 import { ref, reactive } from 'vue'
-import { onShow } from '@dcloudio/uni-app'
+import { onShow, onHide } from '@dcloudio/uni-app'
 import { api } from '../../utils/api'
-import { clearLogin, getCurrentUser, saveLogin } from '../../utils/request'
+import { absUrl, clearLogin, getCurrentUser } from '../../utils/request'
+import { clearDemoTtsCache } from '../../utils/demoTts'
+import { getTtsGender, syncTtsGender } from '../../utils/ttsGender'
+import { playAudio, stopAudio, unlockAudio } from '../../utils/voice'
 
 const user = ref(getCurrentUser() || {})
 const healthText = ref('检测中…')
 const showPwd = ref(false)
 const pwd = reactive({ old: '', new1: '', new2: '' })
+const ttsGender = ref(getTtsGender())
+const previewing = ref(false)
+const genderOpts = [
+  { value: 'female', label: '女声' },
+  { value: 'male', label: '男声' }
+]
+let saving = false
 
 const go = (url) => uni.navigateTo({ url })
 
@@ -66,9 +95,56 @@ function editNickname() {
       if (!r.confirm || !v) return
       const u = await api.updateProfile(v)
       user.value = u
-      saveLogin({ user: u })
+      syncTtsGender(u)
     }
   })
+}
+
+async function setGender(g) {
+  if (g === ttsGender.value || saving) return
+  unlockAudio()
+  stopPreview()
+  saving = true
+  const prev = ttsGender.value
+  ttsGender.value = g
+  try {
+    const u = await api.updateTtsGender(g)
+    user.value = u
+    syncTtsGender(u)
+    clearDemoTtsCache()
+    uni.showToast({ title: g === 'female' ? '已切换为女声' : '已切换为男声', icon: 'none' })
+  } catch (e) {
+    ttsGender.value = prev
+  } finally {
+    saving = false
+  }
+}
+
+function stopPreview() {
+  stopAudio()
+  previewing.value = false
+}
+
+async function previewVoice() {
+  unlockAudio()
+  if (previewing.value) {
+    stopPreview()
+    return
+  }
+  previewing.value = true
+  try {
+    const r = await api.tts('', { preview: true })
+    if (!r.audio_url) {
+      uni.showToast({ title: '当前无法试听（Mock 或网关未就绪）', icon: 'none' })
+      return
+    }
+    if (!previewing.value) return
+    await playAudio(absUrl(r.audio_url))
+  } catch (e) {
+    uni.showToast({ title: (e && e.message ? e.message : '试听失败').slice(0, 40), icon: 'none' })
+  } finally {
+    previewing.value = false
+  }
 }
 
 async function changePwd() {
@@ -86,6 +162,7 @@ function logout() {
     title: '退出登录？',
     success: async (r) => {
       if (!r.confirm) return
+      stopPreview()
       await api.logout().catch(() => {})
       clearLogin()
       uni.reLaunch({ url: '/pages/login/login' })
@@ -97,7 +174,8 @@ onShow(async () => {
   api.me().then((u) => {
     if (u) {
       user.value = u
-      saveLogin({ user: u })
+      syncTtsGender(u)
+      ttsGender.value = getTtsGender()
     }
   }).catch(() => {})
   try {
@@ -107,6 +185,8 @@ onShow(async () => {
     healthText.value = '后端未连接'
   }
 })
+
+onHide(stopPreview)
 </script>
 
 <style lang="scss" scoped>
@@ -120,7 +200,7 @@ onShow(async () => {
 .name { font-size: 34rpx; font-weight: 700; margin-bottom: 8rpx; }
 .admin-tag { margin-left: 12rpx; font-size: 22rpx; color: $tt-primary; background: $tt-tag-bg; padding: 2rpx 10rpx; border-radius: 8rpx; }
 .edit { font-size: 25rpx; color: $tt-primary; }
-.menu { padding: 0 36rpx; }
+.menu { padding: 0 36rpx; margin-bottom: 28rpx; }
 .row {
   display: flex; justify-content: space-between; align-items: center;
   height: 108rpx; font-size: 30rpx; border-bottom: 1rpx solid #EEF1F5;
@@ -129,6 +209,19 @@ onShow(async () => {
 .pwd { padding: 20rpx 0 28rpx; border-bottom: 1rpx solid #EEF1F5; }
 .input { height: 80rpx; padding: 0 22rpx; border-radius: 12rpx; background: #F7F9FC; border: 1rpx solid #E3E7ED; font-size: 28rpx; margin-bottom: 16rpx; }
 .small { height: 80rpx; line-height: 80rpx; font-size: 28rpx; }
-.logout { margin-top: 40rpx; color: #E5484D; }
+.voice-card { padding: 32rpx 36rpx 36rpx; }
+.sec-title { font-size: 30rpx; font-weight: 700; }
+.sec-sub { display: block; font-size: 24rpx; color: $tt-text-3; margin: 8rpx 0 24rpx; }
+.voice-row { display: flex; gap: 20rpx; }
+.chip {
+  flex: 1; height: 80rpx; line-height: 80rpx; text-align: center; border-radius: 16rpx;
+  background: #F0F3F7; color: $tt-text-2; font-size: 28rpx; font-weight: 600;
+  &.on { background: $tt-tag-bg; color: $tt-primary; }
+}
+.preview {
+  margin-top: 24rpx; height: 72rpx; line-height: 72rpx; text-align: center;
+  border-radius: 16rpx; background: $tt-soft; color: $tt-primary; font-size: 27rpx; font-weight: 600;
+}
+.logout { margin-top: 12rpx; color: #E5484D; }
 .foot { display: block; text-align: center; margin-top: 40rpx; }
 </style>

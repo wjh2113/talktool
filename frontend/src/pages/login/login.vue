@@ -49,6 +49,7 @@ import { ref, reactive } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
 import { api } from '../../utils/api'
 import { getDeviceId, saveLogin } from '../../utils/request'
+import { syncTtsGender } from '../../utils/ttsGender'
 
 const statusBar = ref(uni.getSystemInfoSync().statusBarHeight || 20)
 const mode = ref('login')
@@ -81,6 +82,7 @@ async function submit() {
             device_id: getDeviceId() || null
           })
     saveLogin(res)
+    if (res.user) syncTtsGender(res.user)
     if (res.claimed_sessions) toast(`已把这台设备上的 ${res.claimed_sessions} 条训练记录归到你的账号`)
     setTimeout(() => uni.reLaunch({ url: '/pages/index/index' }), res.claimed_sessions ? 1200 : 0)
   } catch (e) {

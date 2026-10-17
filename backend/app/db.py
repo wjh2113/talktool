@@ -71,6 +71,7 @@ MIGRATIONS = [
     ("session", "ip", "TEXT"),
     ("session", "report_status", "TEXT NOT NULL DEFAULT 'none'"),
     ("drill", "pitfalls", "TEXT NOT NULL DEFAULT '[]'"),
+    ("app_user", "tts_gender", "TEXT NOT NULL DEFAULT 'male'"),  # male | female
 ]
 
 

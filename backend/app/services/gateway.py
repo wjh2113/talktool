@@ -134,7 +134,7 @@ async def transcribe(audio: bytes, filename: str = "audio.wav", mime: str = "aud
         return resp.text.strip()
 
 
-async def speech(text: str) -> bytes:
+async def speech(text: str, voice: str = None) -> bytes:
     payload = {
         **_common(),
         "capability": config.TTS_CAPABILITY,
@@ -142,8 +142,9 @@ async def speech(text: str) -> bytes:
         "responseFormat": "mp3",
         "speed": config.TTS_SPEED,
     }
-    if config.TTS_VOICE:
-        payload["voice"] = config.TTS_VOICE
+    v = voice or config.TTS_VOICE
+    if v:
+        payload["voice"] = v
     async with _client() as c:
         resp = await c.post(f"{config.GATEWAY_BASE_URL}/api/ai/tts", json=payload, headers=_headers())
     _check(resp, "语音合成")
