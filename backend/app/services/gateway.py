@@ -172,15 +172,68 @@ async def capabilities() -> list:
     return [x.get("name") for x in resp.json().get("data", [])]
 
 
-def extract_json(text: str) -> dict:
-    """从 LLM 输出中尽量解析出 JSON 对象（兼容 ```json 包裹、前后有说明文字）。"""
-    text = text.strip()
-    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text)
-    try:
-        return json.loads(text)
-    except ValueError:
-        pass
+def _json_candidates(text: str) -> list:
+    """抽出可能的 JSON 片段：整段、去掉 markdown 围栏、第一个 { 到最后一个 }。"""
+    text = (text or "").strip()
+    if not text:
+        return []
+    out, seen = [], set()
+
+    def add(s):
+        s = (s or "").strip()
+        if s and s not in seen:
+            seen.add(s)
+            out.append(s)
+
+    add(text)
+    fenced = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.I | re.M).strip()
+    add(fenced)
+    # 模型常在围栏前后加说明文字，再抠一次围栏内内容
+    m = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text, flags=re.I)
+    if m:
+        add(m.group(1))
     start, end = text.find("{"), text.rfind("}")
     if start != -1 and end > start:
-        return json.loads(text[start:end + 1])
-    raise GatewayError("报告 JSON 解析失败")
+        add(text[start:end + 1])
+    if fenced is not text:
+        start, end = fenced.find("{"), fenced.rfind("}")
+        if start != -1 and end > start:
+            add(fenced[start:end + 1])
+    return out
+
+
+def _json_variants(chunk: str) -> list:
+    """对同一段 JSON 做常见修复：尾逗号、中英文弯引号。"""
+    variants, seen = [], set()
+
+    def add(s):
+        if s and s not in seen:
+            seen.add(s)
+            variants.append(s)
+
+    add(chunk)
+    # 对象/数组末尾多余逗号：{"a":1,} / [1,2,]
+    no_trail = re.sub(r",(\s*[}\]])", r"\1", chunk)
+    add(no_trail)
+    # 弯引号 → 直引号（模型偶尔把中文引号写进 JSON 键值外层）
+    for base in (chunk, no_trail):
+        add(base.replace("\u201c", '"').replace("\u201d", '"')
+                .replace("\u2018", "'").replace("\u2019", "'")
+                .replace("「", '"').replace("」", '"'))
+    return variants
+
+
+def extract_json(text: str) -> dict:
+    """从 LLM 输出中尽量解析出 JSON 对象（兼容 markdown 围栏、前后说明、尾逗号等）。"""
+    last_err = None
+    for cand in _json_candidates(text):
+        for variant in _json_variants(cand):
+            try:
+                obj = json.loads(variant)
+            except ValueError as e:
+                last_err = e
+                continue
+            if isinstance(obj, dict):
+                return obj
+    hint = f"：{last_err}" if last_err else ""
+    raise GatewayError(f"报告 JSON 解析失败{hint}")

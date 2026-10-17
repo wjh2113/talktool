@@ -1,9 +1,12 @@
 """训练报告生成：边界判定（too_short / abandoned）+ LLM 结构化评估。"""
+import logging
 import time
 
 from .. import config
 from . import gateway
 from .prompts import SCORE_DIMENSIONS, build_report_messages, build_turn_review_messages
+
+log = logging.getLogger("talktool")
 
 TOO_SHORT_TEXT = "本次对话时长过短，无法生成报告，可重新练习生成。"
 ABANDONED_TEXT = "本次会话已主动放弃，未生成报告，可重新练习生成。"
@@ -100,15 +103,31 @@ async def generate_report(drill: dict, transcript: list, duration_sec: int, metr
     if config.MOCK:
         return mock_report(transcript)
     msgs = build_report_messages(drill, transcript, duration_sec, metrics_text)
+    cap = report_capability(transcript)
     key = None
     if session_id:
         # 首次生成用固定键（网络重试不重复扣费）；手动“重新生成”换键，按分钟区分避免连点重复扣费
         key = gateway.idem_key("report", session_id, "retry", int(time.time() // 60)) if retry \
             else gateway.idem_key("report", session_id)
-    text = await gateway.chat(msgs, capability=report_capability(transcript), temperature=0.3,
+    text = await gateway.chat(msgs, capability=cap, temperature=0.3,
                               max_tokens=config.REPORT_MAX_TOKENS, idempotency_key=key,
                               max_cost=config.MAX_COST_REPORT)
-    return normalize_report(gateway.extract_json(text), transcript)
+    try:
+        return normalize_report(gateway.extract_json(text), transcript)
+    except gateway.GatewayError as e:
+        # 模型偶发吐出非法 JSON：再要一次合法对象（换幂等键，避免命中坏缓存）
+        log.warning("报告 JSON 不可用，自动再生成一次：%s", e)
+        fix = msgs + [
+            {"role": "assistant", "content": (text or "")[:2500]},
+            {"role": "user", "content":
+             "上一段不是合法 JSON。请只输出一个 JSON 对象，不要 markdown 代码块，不要注释；"
+             "字符串里的双引号请写成 \\\"，不要用中文弯引号包字段。"},
+        ]
+        key2 = gateway.idem_key("report", session_id, "jsonfix", int(time.time() // 60)) if session_id else None
+        text2 = await gateway.chat(fix, capability=cap, temperature=0.1,
+                                   max_tokens=config.REPORT_MAX_TOKENS, idempotency_key=key2,
+                                   max_cost=config.MAX_COST_REPORT)
+        return normalize_report(gateway.extract_json(text2), transcript)
 
 
 async def generate_turn_reviews(drill: dict, transcript: list, session_id=None) -> list:

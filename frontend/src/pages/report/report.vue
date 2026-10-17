@@ -136,7 +136,7 @@
     <view v-else-if="s.status === 'completed'" class="card empty">
       <image class="empty-icon" src="/static/icons/clock.png" />
       <text class="empty-title">报告生成失败</text>
-      <text class="empty-sub">网关暂时不可用，可以重新生成。</text>
+      <text class="empty-sub">评估结果解析失败或网关异常，点下面再试一次即可。</text>
       <view class="retry" @tap="retry">重新生成报告</view>
     </view>
 

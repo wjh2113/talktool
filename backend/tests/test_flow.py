@@ -108,10 +108,17 @@ async def main():
     assert report.decide_status("exit", 200, 3) == "completed"
     assert report.decide_status("finish", 200, 0) == "too_short"
     assert report.decide_status("exit", 10, 0) == "abandoned"
-    # 7) JSON 解析与归一化
+    # 7) JSON 解析与归一化（含尾逗号、围栏外说明文字——生产里报告失败的常见原因）
     raw = gateway.extract_json('好的：\n```json\n{"scores":{"逻辑表达":"9","语言组织":12},"summary":"s","highlights":"a"}\n```')
     n = report.normalize_report(raw)
     assert n["scores"] == {"逻辑表达": 9, "语言组织": 10, "应变能力": 5, "情绪管理": 5} and n["highlights"] == ["a"]
+    trailing = gateway.extract_json('说明文字\n{"scores":{"逻辑表达":7,},"summary":"还行","highlights":["a",],}\n')
+    assert trailing["summary"] == "还行" and trailing["highlights"] == ["a"]
+    try:
+        gateway.extract_json("不是 json")
+        assert False, "应抛 GatewayError"
+    except gateway.GatewayError:
+        pass
     # 8) PCM → WAV
     wav, name, mime = voice.normalize_audio(b"\0" * 3200, "pcm", 16000)
     assert wav[:4] == b"RIFF" and mime == "audio/wav"

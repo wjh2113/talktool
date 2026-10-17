@@ -55,7 +55,7 @@ def build_report_messages(drill: dict, transcript: list, duration_sec: int, metr
   如果有推荐表达框架，点评用户是否用上了框架、哪一步缺失，并给出按框架重组后的示范。
 - summary：一句话总评（不超过 30 字）。
 
-严格按以下 JSON 结构输出，不要输出任何其他内容：
+严格按以下 JSON 结构输出，不要输出任何其他内容（不要 markdown 代码块；字符串内的双引号写成 \\"；不要尾逗号）：
 {{"scores": {{{scores_example}}}, "summary": "...", "highlights": ["..."], "improvements": ["..."], "detail_comment": "..."}}"""
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
