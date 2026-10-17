@@ -1,7 +1,7 @@
 <template>
   <view class="page">
     <view class="hero">
-      <text class="hello">沟通的健身房</text>
+      <text class="hello">沟通表达演练场</text>
       <text class="slogan">AI 扮演对手角色，在真实场景里练习说话</text>
       <view class="stats">
         <view class="stat">
