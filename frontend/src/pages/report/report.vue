@@ -66,6 +66,23 @@
       <text class="muted metric-foot">共发言 {{ m.turns }} 次 · {{ m.chars }} 字 · 有效说话 {{ m.speech_sec }} 秒。参考：日常对话 140–270 字/分较舒适。</text>
     </view>
 
+    <!-- 和长期水平比：之前最近 20 场的平均分、口头禅 -->
+    <view v-if="ready && lt" class="card block">
+      <text class="block-title">和你的长期水平比</text>
+      <text class="muted lt-sub">对比你之前 {{ lt.sessions }} 场训练的平均表现</text>
+      <view v-for="(v, k) in r.scores" :key="k" class="lt-row">
+        <text class="lt-k">{{ k }}</text>
+        <text class="lt-avg">平均 {{ lt.avg[k] === undefined ? '--' : lt.avg[k] }}</text>
+        <text class="lt-now">本次 {{ v }}</text>
+        <text class="dim-d" :class="deltaClass(ltDelta(k, v))">{{ ltDelta(k, v) === null ? '' : deltaText(ltDelta(k, v)) }}</text>
+      </view>
+      <view v-for="f in ltFillers" :key="f.word" class="lt-filler">
+        <text>口头禅「{{ f.word }}」：之前每场约 {{ f.per_session }} 次，本次 {{ f.now }} 次</text>
+        <text class="lt-tag" :class="f.now < f.per_session ? 'up' : 'down'">{{ f.now < f.per_session ? '在改善' : '老问题' }}</text>
+      </view>
+      <text v-if="lt.weakest" class="muted lt-foot">长期最弱：{{ lt.weakest }}{{ r.scores[lt.weakest] !== undefined && r.scores[lt.weakest] > lt.avg[lt.weakest] ? '，这次有进步' : '，可以多练相关场景' }}</text>
+    </view>
+
     <!-- 报告正文 -->
     <block v-if="ready">
       <view v-if="userTurns > 0" class="card block">
@@ -145,6 +162,12 @@
       <text class="empty-sub">{{ s.summary_line }}</text>
     </view>
 
+    <!-- 由智囊锦囊生成的演练：回到锦囊 -->
+    <view v-if="s.drill.consult_id" class="card block plan-back" @tap="openPlan">
+      <text class="block-title no-mb">这是锦囊的演练</text>
+      <text class="muted">报告点评已对照锦囊的关键话术和风险预案；结果也记进了这件事的事件线。打开锦囊看看下一步 ›</text>
+    </view>
+
     <!-- 本场景推荐的表达框架：对照报告复盘 -->
     <view v-if="fws.length" class="card block">
       <text class="block-title">对照表达框架复盘</text>
@@ -158,10 +181,7 @@
       </view>
       <view v-if="pitfalls.length" class="pits">
         <text class="muted">常见误区，对照看看自己有没有踩：</text>
-        <view v-for="(p, i) in pitfalls" :key="i" class="item">
-          <text class="dot bad">✕</text>
-          <text class="item-txt">{{ p }}</text>
-        </view>
+        <PitfallList :items="pitfalls" :limit="4" />
       </view>
     </view>
 
@@ -183,6 +203,7 @@
       <view class="btn-plain" @tap="toRecords">返回训练记录</view>
       <view class="btn-primary again" @tap="again">再练一次</view>
     </view>
+    <text class="ask-advisor" @tap="askAdvisor">这件事在现实里还没想好怎么办？问问智囊团 ›</text>
     <text class="disclaimer">本次结果仅反映这一次训练中的表现。</text>
   </view>
 </template>
@@ -193,6 +214,7 @@ import { onLoad, onShow, onUnload } from '@dcloudio/uni-app'
 import { api } from '../../utils/api'
 import { durationText, mdToHtml } from '../../utils/format'
 import ReadAloud from '../../components/ReadAloud/ReadAloud.vue'
+import PitfallList from '../../components/PitfallList/PitfallList.vue'
 
 const s = ref(null)
 const from = ref('')
@@ -272,6 +294,15 @@ function turnMetricText(turn) {
 }
 
 const prevScore = (k) => (s.value.previous && s.value.previous.scores[k] != null ? s.value.previous.scores[k] : null)
+const lt = computed(() => (s.value && s.value.longterm && s.value.longterm.sessions ? s.value.longterm : null))
+const ltDelta = (k, v) => (lt.value && lt.value.avg[k] !== undefined ? Math.round((v - lt.value.avg[k]) * 10) / 10 : null)
+const ltFillers = computed(() => {
+  if (!lt.value || !lt.value.fillers) return []
+  const now = {}
+  const top = (m.value && m.value.filler_top) || []
+  top.forEach((f) => (now[f.word] = f.count))
+  return lt.value.fillers.map((f) => ({ ...f, now: now[f.word] || 0 }))
+})
 const dimDelta = (k, v) => (prevScore(k) === null ? null : v - prevScore(k))
 const deltaText = (d) => (d > 0 ? `↑${d}` : d < 0 ? `↓${-d}` : '持平')
 const deltaClass = (d) => (d === null ? '' : d > 0 ? 'up' : d < 0 ? 'down' : 'flat')
@@ -304,6 +335,17 @@ async function retry() {
   applyDetail(await api.retryReport(s.value.id))
   pollCount = 0
   startPolling()
+}
+
+function openPlan() {
+  uni.navigateTo({ url: `/pages/plan/plan?id=${s.value.drill.consult_id}` })
+}
+
+function askAdvisor() {
+  const d = s.value.drill
+  const text = `我在练「${d.title}」这个场景：${(d.description || '').slice(0, 200)}。现实里我该怎么做、怎么说？`
+  uni.setStorageSync('tt_pending_consult', { text, council: '' })
+  uni.navigateTo({ url: '/pages/consult/consult' })
 }
 
 function toRecords() {
@@ -377,6 +419,16 @@ onUnload(() => clearTimeout(pollTimer))
 .lv.warn { background: #FFF4E5; color: #E68A1A; }
 .fillers { margin-top: 18rpx; display: flex; flex-wrap: wrap; align-items: center; gap: 12rpx; }
 .filler { font-size: 24rpx; color: #E68A1A; background: #FFF4E5; padding: 4rpx 14rpx; border-radius: 10rpx; }
+.lt-sub { display: block; margin: -8rpx 0 16rpx; }
+.lt-row { display: flex; align-items: center; padding: 10rpx 0; font-size: 26rpx; }
+.lt-k { width: 140rpx; color: #4A4F57; }
+.lt-avg { flex: 1; color: $tt-text-3; }
+.lt-now { width: 120rpx; font-weight: 700; }
+.lt-filler { display: flex; align-items: center; justify-content: space-between; gap: 12rpx; font-size: 25rpx; color: $tt-text-2; margin-top: 14rpx; line-height: 1.6; }
+.lt-tag { flex-shrink: 0; font-size: 21rpx; padding: 2rpx 12rpx; border-radius: 8rpx; }
+.lt-tag.up { background: #E7F7EE; color: #22A060; }
+.lt-tag.down { background: #FFF4E5; color: #E68A1A; }
+.lt-foot { display: block; margin-top: 16rpx; line-height: 1.6; }
 .metric-foot { display: block; margin-top: 18rpx; line-height: 1.6; }
 .review-gen { margin-top: 18rpx; display: flex; flex-direction: column; }
 .gen-btn {
@@ -412,7 +464,6 @@ onUnload(() => clearTimeout(pollTimer))
 .fw-ex { font-size: 25rpx; color: $tt-text-2; margin-top: 8rpx; line-height: 1.7; }
 .pits { margin-top: 24rpx; }
 .pits .muted { display: block; margin-bottom: 14rpx; }
-.dot.bad { color: #F56C6C; background: transparent; }
 .item-txt { flex: 1; font-size: 28rpx; line-height: 1.7; color: #333; }
 .empty { padding: 70rpx 40rpx; display: flex; flex-direction: column; align-items: center; margin-bottom: 28rpx; }
 .empty-icon-wrap {
@@ -437,5 +488,7 @@ onUnload(() => clearTimeout(pollTimer))
 .actions { display: flex; gap: 24rpx; margin-top: 12rpx; }
 .actions .btn-plain { flex: 1; }
 .again { flex: 1; }
+.plan-back { border-left: 8rpx solid $tt-primary; display: flex; flex-direction: column; gap: 10rpx; }
+.ask-advisor { display: block; text-align: center; color: $tt-primary; font-size: 26rpx; margin: 8rpx 0 24rpx; }
 .disclaimer { display: block; text-align: center; font-size: 24rpx; color: $tt-text-3; margin-top: 32rpx; }
 </style>

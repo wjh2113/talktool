@@ -9,7 +9,7 @@ from .sessions import BadRequest, NotFound, _load_drill, _public_drill
 
 log = logging.getLogger("talktool")
 
-NOTE_KINDS = ("phrase", "tip", "script")
+NOTE_KINDS = ("phrase", "tip", "script", "plan")
 
 
 # ---------------- 练习本 ----------------

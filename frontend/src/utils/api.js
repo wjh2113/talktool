@@ -63,6 +63,67 @@ export const api = {
   addNote: (data) => request('/api/notes', { method: 'POST', data }),
   deleteNote: (id) => request(`/api/notes/${id}`, { method: 'DELETE' }),
 
+  // AI 智囊团
+  transcribe: (rec) => uploadAudio('/api/transcribe', rec),
+  advisorHome: () => request('/api/advisor/home'),
+  councils: () => request('/api/councils'),
+  strategies: (school = '', domain = '', q = '') => {
+    const qs = []
+    if (school) qs.push('school=' + encodeURIComponent(school))
+    if (domain) qs.push('domain=' + encodeURIComponent(domain))
+    if (q) qs.push('q=' + encodeURIComponent(q))
+    return request('/api/strategies' + (qs.length ? '?' + qs.join('&') : ''))
+  },
+  strategy: (code) => request(`/api/strategies/${encodeURIComponent(code)}`),
+  createConsult: (text, council, advisors) =>
+    request('/api/consults', { method: 'POST', data: { text, council: council || null, advisors: advisors || null }, timeout: 90000 }),
+  advisorDue: () => request('/api/advisor/due'),
+  consults: () => request('/api/consults'),
+  consult: (id, version) => request(`/api/consults/${id}` + (version ? `?version=${version}` : '')),
+  consultMessage: (id, text, kind = 'ask') =>
+    request(`/api/consults/${id}/messages`, { method: 'POST', data: { text, kind }, timeout: 150000 }),
+  makePlan: (id, council) =>
+    request(`/api/consults/${id}/plan`, { method: 'POST', data: { council: council || null }, timeout: 150000 }),
+  rehearse: (id) => request(`/api/consults/${id}/rehearse`, { method: 'POST' }),
+  deleteConsult: (id) => request(`/api/consults/${id}`, { method: 'DELETE' }),
+  updateAction: (id, data) => request(`/api/plan-actions/${id}`, { method: 'PUT', data }),
+  roundtable: (id, topic) => request(`/api/consults/${id}/roundtable`, { method: 'POST', data: { topic: topic || '' }, timeout: 150000 }),
+  setConsultAdvisors: (id, codes) => request(`/api/consults/${id}/advisors`, { method: 'PUT', data: { codes } }),
+  snoozeConsult: (id, days) => request(`/api/consults/${id}/snooze`, { method: 'POST', data: { days } }),
+  stopFollow: (id) => request(`/api/consults/${id}/stop-follow`, { method: 'POST' }),
+  ratePlan: (id, rating, reason) => request(`/api/plans/${id}/rating`, { method: 'PUT', data: { rating, reason: reason || '' } }),
+  myAdvisors: () => request('/api/my-advisors'),
+  createMyAdvisor: (data) => request('/api/my-advisors', { method: 'POST', data }),
+  updateMyAdvisor: (code, data) => request(`/api/my-advisors/${code}`, { method: 'PUT', data }),
+  deleteMyAdvisor: (code) => request(`/api/my-advisors/${code}`, { method: 'DELETE' }),
+
+  // 长期记忆
+  memory: () => request('/api/memory'),
+  memoryAddProfile: (text) => request('/api/memory/profile', { method: 'POST', data: { text } }),
+  memoryUpdateItem: (id, data) => request(`/api/memory/items/${id}`, { method: 'PUT', data }),
+  memoryDeleteItem: (id) => request(`/api/memory/items/${id}`, { method: 'DELETE' }),
+  memoryUpdateSubject: (id, data) => request(`/api/memory/subjects/${id}`, { method: 'PUT', data }),
+  memoryMergeSubject: (id, into) => request(`/api/memory/subjects/${id}/merge`, { method: 'POST', data: { into } }),
+  memoryDeleteSubject: (id) => request(`/api/memory/subjects/${id}`, { method: 'DELETE' }),
+  memoryCompact: (id) => request(`/api/memory/subjects/${id}/compact`, { method: 'POST', timeout: 90000 }),
+  memoryPause: (paused) => request('/api/memory/pause', { method: 'POST', data: { paused } }),
+  memoryClear: () => request('/api/memory/clear', { method: 'POST' }),
+
+  // 管理员：提示词 / 智囊团
+  adminPrompts: () => request('/api/admin/prompts'),
+  adminPrompt: (key) => request(`/api/admin/prompts/${encodeURIComponent(key)}`),
+  adminSavePrompt: (key, data) => request(`/api/admin/prompts/${encodeURIComponent(key)}`, { method: 'PUT', data }),
+  adminTestPrompt: (key, message, draft) =>
+    request(`/api/admin/prompts/${encodeURIComponent(key)}/test`, { method: 'POST', data: { message, draft: draft || null }, timeout: 180000 }),
+  adminPublishPrompt: (key) => request(`/api/admin/prompts/${encodeURIComponent(key)}/publish`, { method: 'POST' }),
+  adminRollbackPrompt: (key, version) =>
+    request(`/api/admin/prompts/${encodeURIComponent(key)}/rollback`, { method: 'POST', data: { version } }),
+  adminResetPrompt: (key) => request(`/api/admin/prompts/${encodeURIComponent(key)}/reset`, { method: 'POST' }),
+  adminCouncils: () => request('/api/admin/councils'),
+  adminSaveCouncil: (code, data) => request(`/api/admin/councils/${code}`, { method: 'PUT', data }),
+  adminCreateCouncil: (data) => request('/api/admin/councils', { method: 'POST', data }),
+  adminAdvisorStats: (days = 30) => request(`/api/admin/advisor-stats?days=${days}`),
+
   // 自定义场景
   customDrills: () => request('/api/custom-drills'),
   createCustom: (description, pressure_level) =>

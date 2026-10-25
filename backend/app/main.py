@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from . import config
 from .db import init_db
 from .services import auth, catalog_import, frameworks, library, maintenance, practice
+from .services import advisor_admin, advisor_stats, consult, memory, my_advisors, prompt_store, strategies, workflow
 from .services import sessions as svc
 from .services.gateway import GatewayError
 
@@ -376,3 +377,344 @@ def delete_custom(drill_id: int, user: dict = Depends(current_user)):
 @app.get("/api/stats")
 def stats(user: dict = Depends(current_user)):
     return svc.get_stats(user["uid"])
+
+
+
+# ---------------- AI 智囊团 ----------------
+
+@app.post("/api/transcribe")
+async def transcribe_audio(audio: UploadFile = File(...), format: str = Form("wav"), sample_rate: int = Form(16000),
+                           user: dict = Depends(current_user)):
+    """语音输入：转成文字，前端放进输入框让用户确认后再发。"""
+    data = await audio.read()
+    if len(data) > 25 * 1024 * 1024:
+        raise HTTPException(413, "音频过大")
+    return {"text": await consult.resolve_text("", data, format, sample_rate)}
+
+
+@app.get("/api/advisor/home")
+def advisor_home(user: dict = Depends(current_user)):
+    return {"councils": workflow.councils(), "ongoing": consult.ongoing_cases(user["uid"]),
+            "consults": consult.list_consults(user["uid"], 20), "memory_paused": memory.is_paused(user["uid"]),
+            "due": consult.due_followups(user["uid"]), "my_advisors": my_advisors.list_mine(user["uid"])}
+
+
+@app.get("/api/advisor/due")
+def advisor_due(user: dict = Depends(current_user)):
+    """首页 / 底栏角标用：有几件事该跟进了。"""
+    items = consult.due_followups(user["uid"])
+    return {"count": len(items), "items": items}
+
+
+@app.get("/api/councils")
+def council_list(user: dict = Depends(current_user)):
+    return workflow.councils()
+
+
+@app.get("/api/strategies")
+def strategy_list(school: Optional[str] = None, domain: Optional[str] = None, q: Optional[str] = None,
+                  user: dict = Depends(current_user)):
+    return strategies.list_strategies(school, domain, q)
+
+
+@app.get("/api/strategies/{code}")
+def strategy_detail(code: str, user: dict = Depends(current_user)):
+    return strategies.get_strategy(code)
+
+
+class ConsultIn(BaseModel):
+    text: str
+    council: Optional[str] = None
+    advisors: Optional[list] = None   # 列席的私人谋士 code
+
+
+class ConsultMsgIn(BaseModel):
+    text: str = ""
+    kind: str = "ask"   # answer | ask | review | skip
+
+
+class PlanIn(BaseModel):
+    council: Optional[str] = None
+
+
+class ActionIn(BaseModel):
+    done: Optional[bool] = None
+    result: Optional[str] = None
+    remind_at: Optional[str] = None   # YYYY-MM-DD；空字符串 = 取消提醒
+
+
+class RoundtableIn(BaseModel):
+    topic: str = ""
+
+
+class ExtraAdvisorsIn(BaseModel):
+    codes: list = []
+
+
+class SnoozeIn(BaseModel):
+    days: int = 2
+
+
+class RatingIn(BaseModel):
+    rating: int          # 1 有用 / -1 没用 / 0 撤销
+    reason: str = ""
+
+
+class MyAdvisorIn(BaseModel):
+    name: str
+    avatar: str = ""
+    persona: str = ""
+    style: str = ""
+    schools: list = []
+
+
+@app.post("/api/consults")
+async def consult_create(body: ConsultIn, user: dict = Depends(current_user)):
+    text = await consult.resolve_text(body.text)
+    return await consult.create(user["uid"], text, body.council, body.advisors)
+
+
+@app.get("/api/consults")
+def consult_list(user: dict = Depends(current_user)):
+    return consult.list_consults(user["uid"])
+
+
+@app.get("/api/consults/{consult_id}")
+def consult_detail(consult_id: int, version: Optional[int] = None, user: dict = Depends(current_user)):
+    return consult.get_detail(user["uid"], consult_id, version)
+
+
+@app.post("/api/consults/{consult_id}/messages")
+async def consult_message(consult_id: int, body: ConsultMsgIn, user: dict = Depends(current_user)):
+    text = "" if body.kind == "skip" else await consult.resolve_text(body.text)
+    return await consult.add_message(user["uid"], consult_id, text, body.kind)
+
+
+@app.post("/api/consults/{consult_id}/plan")
+async def consult_plan(consult_id: int, body: PlanIn = None, user: dict = Depends(current_user)):
+    return await consult.make_plan(user["uid"], consult_id, body.council if body else None)
+
+
+@app.post("/api/consults/{consult_id}/rehearse")
+def consult_rehearse(consult_id: int, user: dict = Depends(current_user)):
+    return consult.rehearse(user["uid"], consult_id)
+
+
+@app.delete("/api/consults/{consult_id}")
+def consult_delete(consult_id: int, user: dict = Depends(current_user)):
+    return consult.delete_consult(user["uid"], consult_id)
+
+
+@app.post("/api/consults/{consult_id}/roundtable")
+async def consult_roundtable(consult_id: int, body: RoundtableIn = None, user: dict = Depends(current_user)):
+    return await consult.roundtable(user["uid"], consult_id, body.topic if body else "")
+
+
+@app.put("/api/consults/{consult_id}/advisors")
+def consult_extra_advisors(consult_id: int, body: ExtraAdvisorsIn, user: dict = Depends(current_user)):
+    return consult.set_extra_advisors(user["uid"], consult_id, body.codes)
+
+
+@app.post("/api/consults/{consult_id}/snooze")
+def consult_snooze(consult_id: int, body: SnoozeIn = None, user: dict = Depends(current_user)):
+    return consult.snooze(user["uid"], consult_id, body.days if body else 2)
+
+
+@app.post("/api/consults/{consult_id}/stop-follow")
+def consult_stop_follow(consult_id: int, user: dict = Depends(current_user)):
+    return consult.stop_follow(user["uid"], consult_id)
+
+
+@app.put("/api/plans/{plan_id}/rating")
+def plan_rating(plan_id: int, body: RatingIn, user: dict = Depends(current_user)):
+    return consult.rate_plan(user["uid"], plan_id, body.rating, body.reason)
+
+
+@app.put("/api/plan-actions/{action_id}")
+def plan_action(action_id: int, body: ActionIn, user: dict = Depends(current_user)):
+    return consult.update_action(user["uid"], action_id, body.done, body.result, body.remind_at)
+
+
+# ---- 私人谋士 ----
+
+@app.get("/api/my-advisors")
+def my_advisor_list(user: dict = Depends(current_user)):
+    return {"items": my_advisors.list_mine(user["uid"]), "templates": my_advisors.TEMPLATES,
+            "styles": my_advisors.STYLES, "max": my_advisors.MAX_PER_USER,
+            "schools": [{"code": x["code"], "name": x["name"]} for x in strategies.schools()]}
+
+
+@app.post("/api/my-advisors")
+def my_advisor_create(body: MyAdvisorIn, user: dict = Depends(current_user)):
+    return my_advisors.create(user["uid"], body.dict())
+
+
+@app.put("/api/my-advisors/{code}")
+def my_advisor_update(code: str, body: MyAdvisorIn, user: dict = Depends(current_user)):
+    return my_advisors.update(user["uid"], code, body.dict())
+
+
+@app.delete("/api/my-advisors/{code}")
+def my_advisor_delete(code: str, user: dict = Depends(current_user)):
+    return my_advisors.delete(user["uid"], code)
+
+
+# ---- 长期记忆 ----
+
+class MemTextIn(BaseModel):
+    text: Optional[str] = None
+    pinned: Optional[bool] = None
+
+
+class SubjectIn(BaseModel):
+    name: Optional[str] = None
+    aliases: Optional[list] = None
+    summary: Optional[str] = None
+    status: Optional[str] = None
+
+
+class MergeIn(BaseModel):
+    into: int
+
+
+class PauseIn(BaseModel):
+    paused: bool
+
+
+@app.get("/api/memory")
+def memory_overview(user: dict = Depends(current_user)):
+    return memory.overview(user["uid"])
+
+
+@app.post("/api/memory/profile")
+def memory_add_profile(body: MemTextIn, user: dict = Depends(current_user)):
+    return memory.add_profile(user["uid"], body.text or "")
+
+
+@app.put("/api/memory/items/{item_id}")
+def memory_update_item(item_id: int, body: MemTextIn, user: dict = Depends(current_user)):
+    return memory.update_item(user["uid"], item_id, body.text, body.pinned)
+
+
+@app.delete("/api/memory/items/{item_id}")
+def memory_delete_item(item_id: int, user: dict = Depends(current_user)):
+    return memory.delete_item(user["uid"], item_id)
+
+
+@app.put("/api/memory/subjects/{subject_id}")
+def memory_update_subject(subject_id: int, body: SubjectIn, user: dict = Depends(current_user)):
+    return memory.update_subject(user["uid"], subject_id, body.dict())
+
+
+@app.post("/api/memory/subjects/{subject_id}/merge")
+def memory_merge_subject(subject_id: int, body: MergeIn, user: dict = Depends(current_user)):
+    return memory.merge_subjects(user["uid"], body.into, subject_id)
+
+
+@app.post("/api/memory/subjects/{subject_id}/compact")
+async def memory_compact_subject(subject_id: int, user: dict = Depends(current_user)):
+    """手动整理一张卡：合并重复、去掉过时的条目（置顶的不动）。"""
+    return await memory.compact_subject(user["uid"], subject_id, force=True)
+
+
+@app.delete("/api/memory/subjects/{subject_id}")
+def memory_delete_subject(subject_id: int, user: dict = Depends(current_user)):
+    return memory.delete_subject(user["uid"], subject_id)
+
+
+@app.post("/api/memory/pause")
+def memory_pause(body: PauseIn, user: dict = Depends(current_user)):
+    return memory.set_paused(user["uid"], body.paused)
+
+
+@app.post("/api/memory/clear")
+def memory_clear(user: dict = Depends(current_user)):
+    return memory.clear_all(user["uid"])
+
+
+# ---- 管理员：提示词 / 智囊团 ----
+
+class PromptIn(BaseModel):
+    system: str = ""
+    user: str = ""
+    capability: Optional[str] = None
+    max_tokens: Optional[int] = None
+    temperature: Optional[float] = None
+    note: str = ""
+
+
+class PromptTestIn(BaseModel):
+    message: str
+    draft: Optional[PromptIn] = None   # 传了就用编辑框里的内容试跑，不传就用已保存的草稿
+
+
+class RollbackIn(BaseModel):
+    version: int
+
+
+class CouncilIn(BaseModel):
+    code: Optional[str] = None
+    name: str
+    icon: str = ""
+    description: str = ""
+    advisors: list = []
+    schools: list = []
+    domains: list = []
+    requirement: str = ""
+    examples: list = []
+    enabled: bool = True
+
+
+@app.get("/api/admin/prompts")
+def admin_prompts(admin: dict = Depends(admin_user)):
+    return prompt_store.list_prompts()
+
+
+@app.get("/api/admin/prompts/{key}")
+def admin_prompt_detail(key: str, admin: dict = Depends(admin_user)):
+    return prompt_store.detail(key)
+
+
+@app.put("/api/admin/prompts/{key}")
+def admin_prompt_save(key: str, body: PromptIn, admin: dict = Depends(admin_user)):
+    return prompt_store.save_draft(key, body.dict(), admin["id"])
+
+
+@app.post("/api/admin/prompts/{key}/test")
+async def admin_prompt_test(key: str, body: PromptTestIn, admin: dict = Depends(admin_user)):
+    return await advisor_admin.test_prompt(key, body.message, body.draft.dict() if body.draft else None, admin["uid"])
+
+
+@app.post("/api/admin/prompts/{key}/publish")
+def admin_prompt_publish(key: str, admin: dict = Depends(admin_user)):
+    return prompt_store.publish(key, admin["id"])
+
+
+@app.post("/api/admin/prompts/{key}/rollback")
+def admin_prompt_rollback(key: str, body: RollbackIn, admin: dict = Depends(admin_user)):
+    return prompt_store.rollback(key, body.version, admin["id"])
+
+
+@app.post("/api/admin/prompts/{key}/reset")
+def admin_prompt_reset(key: str, admin: dict = Depends(admin_user)):
+    return prompt_store.reset(key)
+
+
+@app.get("/api/admin/councils")
+def admin_councils(admin: dict = Depends(admin_user)):
+    return {"items": advisor_admin.list_councils(), "options": advisor_admin.options()}
+
+
+@app.put("/api/admin/councils/{code}")
+def admin_council_update(code: str, body: CouncilIn, admin: dict = Depends(admin_user)):
+    return advisor_admin.update_council(code, body.dict())
+
+
+@app.post("/api/admin/councils")
+def admin_council_create(body: CouncilIn, admin: dict = Depends(admin_user)):
+    return advisor_admin.create_council(body.dict())
+
+
+@app.get("/api/admin/advisor-stats")
+def admin_advisor_stats(days: int = 30, admin: dict = Depends(admin_user)):
+    return advisor_stats.overview(days)

@@ -13,6 +13,13 @@
       }
     },
     {
+      "path": "pages/advisor/advisor",
+      "style": {
+        "navigationBarTitleText": "AI 智囊团",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
       "path": "pages/notebook/notebook",
       "style": {
         "navigationBarTitleText": "练习本",
@@ -94,6 +101,62 @@
         "navigationBarTitleText": "管理后台",
         "enablePullDownRefresh": true
       }
+    },
+    {
+      "path": "pages/consult/consult",
+      "style": {
+        "navigationBarTitleText": "问计"
+      }
+    },
+    {
+      "path": "pages/plan/plan",
+      "style": {
+        "navigationBarTitleText": "锦囊"
+      }
+    },
+    {
+      "path": "pages/strategies/strategies",
+      "style": {
+        "navigationBarTitleText": "谋略库"
+      }
+    },
+    {
+      "path": "pages/strategy/strategy",
+      "style": {
+        "navigationBarTitleText": "谋略"
+      }
+    },
+    {
+      "path": "pages/memory/memory",
+      "style": {
+        "navigationBarTitleText": "智囊记得的",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/admin-prompts/admin-prompts",
+      "style": {
+        "navigationBarTitleText": "提示词管理"
+      }
+    },
+    {
+      "path": "pages/admin-councils/admin-councils",
+      "style": {
+        "navigationBarTitleText": "智囊团配置"
+      }
+    },
+    {
+      "path": "pages/my-advisors/my-advisors",
+      "style": {
+        "navigationBarTitleText": "我的私人谋士"
+      }
+    },
+    {
+      "path": "pages/admin-advisor-stats/admin-advisor-stats",
+      "style": {
+        "navigationBarTitleText": "问计效果统计",
+        "enablePullDownRefresh": true
+      }
     }
   ],
   "globalStyle": {
@@ -119,6 +182,12 @@
         "text": "场景",
         "iconPath": "static/tab/scene.png",
         "selectedIconPath": "static/tab/scene-active.png"
+      },
+      {
+        "pagePath": "pages/advisor/advisor",
+        "text": "智囊",
+        "iconPath": "static/tab/advisor.png",
+        "selectedIconPath": "static/tab/advisor-active.png"
       },
       {
         "pagePath": "pages/notebook/notebook",

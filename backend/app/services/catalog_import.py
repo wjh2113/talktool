@@ -1,6 +1,6 @@
-"""管理员导入场景库 / 表达框架（Markdown 或 ZIP）。
+"""管理员导入场景库 / 表达框架 / 谋略 / 谋士 / 智囊团（Markdown 或 ZIP）。
 
-格式约定见 docs/场景库导入格式.md。
+格式约定见 docs/场景库导入格式.md、docs/谋略库导入格式.md（谋略类的解析在 advisor_import.py）。
 匹配键：
   - 分类：name
   - 场景：category + title
@@ -553,15 +553,20 @@ def import_bytes(data: bytes, filename: str, mode: str = "upsert") -> dict[str, 
     if mode not in ("upsert", "add_only"):
         raise BadRequest("mode 只能是 upsert 或 add_only")
 
+    from . import advisor_import as ai
     texts = extract_md_texts(data, filename)
     all_fw: list[dict] = []
     all_cats: list[dict] = []
+    adv = {"strategies": [], "advisors": [], "councils": []}
+    raw_adv = []
     files = []
 
     for fname, text in texts:
-        kind = _detect_kind(text)
+        kind = ai.detect(text) or _detect_kind(text)
         files.append({"name": fname, "kind": kind})
-        if kind == "frameworks":
+        if kind in adv:
+            raw_adv.append((kind, text))
+        elif kind == "frameworks":
             all_fw.extend(parse_frameworks_md(text))
         else:
             # 合并同名分类
@@ -584,13 +589,41 @@ def import_bytes(data: bytes, filename: str, mode: str = "upsert") -> dict[str, 
                             else:
                                 esc["drills"].append(d)
 
-    if not all_fw and not all_cats:
+    warnings: list[str] = []
+    if raw_adv:
+        fw_codes = {f["code"] for f in all_fw}
+        with get_conn() as conn:
+            fw_codes |= {r[0] for r in conn.execute("SELECT code FROM framework")}
+        for kind, text in raw_adv:
+            if kind == "strategies":
+                adv["strategies"] += ai.parse_strategies(text, fw_codes, warnings)
+            elif kind == "advisors":
+                adv["advisors"] += ai.parse_advisors(text)
+            else:
+                adv["councils"] += ai.parse_councils(text)
+
+    if not all_fw and not all_cats and not any(adv.values()):
         raise BadRequest("没有可导入的内容")
 
+    zero = {"added": 0, "updated": 0, "skipped": 0}
     with get_conn() as conn:
-        fw_stat = _upsert_frameworks(conn, all_fw, mode) if all_fw else {"added": 0, "updated": 0, "skipped": 0}
+        fw_stat = _upsert_frameworks(conn, all_fw, mode) if all_fw else dict(zero)
         cat_stat = _upsert_catalog(conn, all_cats, mode) if all_cats else {
             "categories_added": 0, "scenarios_added": 0, "drills_added": 0, "drills_updated": 0, "drills_skipped": 0}
+        st_stat = ai.upsert_strategies(conn, adv["strategies"], mode) if adv["strategies"] else dict(zero)
+        ad_stat = ai.upsert_advisors(conn, adv["advisors"], mode) if adv["advisors"] else dict(zero)
+        co_stat = ai.upsert_councils(conn, adv["councils"], mode) if adv["councils"] else dict(zero)
+
+    parts = []
+    if all_fw:
+        parts.append(f"框架 +{fw_stat['added']}/改{fw_stat['updated']}")
+    if all_cats:
+        parts.append(f"训练 +{cat_stat['drills_added']}/改{cat_stat['drills_updated']}"
+                     + (f"/跳过{cat_stat['drills_skipped']}" if cat_stat['drills_skipped'] else ""))
+    for label, stt, items in (("谋略", st_stat, adv["strategies"]), ("谋士", ad_stat, adv["advisors"]),
+                              ("智囊团", co_stat, adv["councils"])):
+        if items:
+            parts.append(f"{label} +{stt['added']}/改{stt['updated']}" + (f"/跳过{stt['skipped']}" if stt["skipped"] else ""))
 
     return {
         "ok": True,
@@ -598,9 +631,9 @@ def import_bytes(data: bytes, filename: str, mode: str = "upsert") -> dict[str, 
         "files": files,
         "frameworks": fw_stat,
         "catalog": cat_stat,
-        "summary": (
-            f"框架 +{fw_stat['added']}/改{fw_stat['updated']}；"
-            f"训练 +{cat_stat['drills_added']}/改{cat_stat['drills_updated']}"
-            + (f"/跳过{cat_stat['drills_skipped']}" if cat_stat['drills_skipped'] else "")
-        ),
+        "strategies": st_stat,
+        "advisors": ad_stat,
+        "councils": co_stat,
+        "warnings": warnings[:30],
+        "summary": "；".join(parts),
     }

@@ -18,7 +18,7 @@
         <text class="muted">{{ n.drill_title || '训练' }} · {{ n.created_at.slice(0, 10) }}</text>
         <text v-if="n.drill_id" class="link" @tap="openDrill(n)">去练这个场景 ›</text>
       </view>
-      <ReadAloud v-if="n.kind !== 'tip'" :text="n.text" :note-id="n.id" :best="n.best_score" @scored="onScored(n, $event)" />
+      <ReadAloud v-if="n.kind !== 'tip' && n.kind !== 'plan'" :text="n.text" :note-id="n.id" :best="n.best_score" @scored="onScored(n, $event)" />
     </view>
 
     <view v-if="!loading && !items.length" class="card empty">
@@ -36,12 +36,13 @@ import { onShow, onPullDownRefresh } from '@dcloudio/uni-app'
 import { api } from '../../utils/api'
 import ReadAloud from '../../components/ReadAloud/ReadAloud.vue'
 
-const KIND_TEXT = { phrase: '话术', tip: '建议', script: '示范稿' }
+const KIND_TEXT = { phrase: '话术', tip: '建议', script: '示范稿', plan: '锦囊' }
 const filters = [
   { key: '', label: '全部' },
   { key: 'phrase', label: '话术' },
   { key: 'tip', label: '建议' },
-  { key: 'script', label: '示范稿' }
+  { key: 'script', label: '示范稿' },
+  { key: 'plan', label: '锦囊' }
 ]
 const kind = ref('')
 const items = ref([])
@@ -99,6 +100,7 @@ onPullDownRefresh(load)
   font-size: 22rpx; padding: 4rpx 14rpx; border-radius: 8rpx; background: $tt-tag-bg; color: $tt-primary;
   &.tip { background: #FFF4E5; color: #E68A1A; }
   &.script { background: #E7F7EE; color: #22A060; }
+  &.plan { background: #EEF0FF; color: #5B5BD6; }
 }
 .best { font-size: 22rpx; color: $tt-text-3; margin-left: 16rpx; }
 .del { margin-left: auto; font-size: 24rpx; color: $tt-text-3; }

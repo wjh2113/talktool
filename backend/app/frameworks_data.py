@@ -475,3 +475,8 @@ def _load_ip():
 
 
 _load_ip()
+
+from .pitfalls_data import apply_ip_pitfalls, apply_to_frameworks  # noqa: E402  资料里的完整误区与原则
+
+apply_to_frameworks(FRAMEWORKS)
+apply_ip_pitfalls(FRAMEWORKS)

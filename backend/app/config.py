@@ -76,6 +76,7 @@ ASR_MIN_SPEECH_MS = int(_env("ASR_MIN_SPEECH_MS", "300"))  # 录音里有效人�
 MAX_COST_REPLY = _cost("MAX_COST_REPLY", "0.03")           # 单次调用成本上限（元），对应网关 maxCostCny
 MAX_COST_REPORT = _cost("MAX_COST_REPORT", "0.2")
 MAX_COST_OTHER = _cost("MAX_COST_OTHER", "0.1")            # 自定义场景 / 示范稿 / 逐句复盘
+MAX_COST_CONSULT = _cost("MAX_COST_CONSULT", "0.3")         # 智囊团单次调用（出锦囊用 quality-chat，输出较长）
 DAILY_SESSION_LIMIT = int(_env("DAILY_SESSION_LIMIT", "30"))     # 每个用户每天最多开始的训练数（0 = 不限）
 DAILY_IP_SESSION_LIMIT = int(_env("DAILY_IP_SESSION_LIMIT", "100"))  # 同一 IP 每天最多开始的训练数（防换 ID 刷）
 
@@ -91,6 +92,8 @@ DAILY_PRONOUNCE_LIMIT = int(_env("DAILY_PRONOUNCE_LIMIT", "150"))
 DAILY_CUSTOM_LIMIT = int(_env("DAILY_CUSTOM_LIMIT", "10"))      # 每天生成自定义场景次数
 DAILY_REVIEW_LIMIT = int(_env("DAILY_REVIEW_LIMIT", "50"))      # 逐句复盘 / 示范稿 / 重新生成报告
 MAX_USER_TURNS = int(_env("MAX_USER_TURNS", "30"))              # 单场训练最多发言轮数
+DAILY_CONSULT_LIMIT = int(_env("DAILY_CONSULT_LIMIT", "0"))      # 智囊团每天提问次数（0 = 不限，只计数）
+CONSULT_MAX_MESSAGES = int(_env("CONSULT_MAX_MESSAGES", "60"))  # 单次问计最多消息数
 
 # ---- 音频清理 ----
 AUDIO_RETENTION_DAYS = int(_env("AUDIO_RETENTION_DAYS", "7"))   # 对话中的 AI 语音保留天数

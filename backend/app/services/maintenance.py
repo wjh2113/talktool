@@ -1,4 +1,4 @@
-"""定时维护：清理旧音频、过期令牌、旧用量计数。由 main.py 启动后台循环。"""
+"""定时维护：清理旧音频、过期令牌、旧用量计数；整理长期记忆（搁置久未更新的事、压缩过长的卡片）。由 main.py 启动后台循环。"""
 import asyncio
 import logging
 import time
@@ -57,4 +57,11 @@ async def loop():
             await asyncio.get_running_loop().run_in_executor(None, run_once)
         except Exception as e:  # noqa: BLE001
             log.warning("定时清理失败：%s", e)
+        try:
+            from . import memory
+            res = await memory.maintain()
+            if res["dormant"] or res["compacted"]:
+                log.info("整理记忆：搁置 %s 条事件线，压缩 %s 张卡片", res["dormant"], res["compacted"])
+        except Exception as e:  # noqa: BLE001
+            log.warning("整理记忆失败：%s", e)
         await asyncio.sleep(max(0.1, config.CLEANUP_INTERVAL_HOURS) * 3600)

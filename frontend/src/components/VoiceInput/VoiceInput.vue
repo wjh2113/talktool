@@ -1,0 +1,74 @@
+<template>
+  <view class="vi" :class="{ rec: state === 'recording', busy: state === 'busy' }" @tap="toggle">
+    <view v-if="state === 'recording'" class="vi-level" :style="{ transform: `scale(${1 + Math.min(0.6, level * 8)})` }" />
+    <image class="vi-icon" :src="state === 'recording' ? '/static/icons/mic-white.png' : '/static/icons/mic.png'" />
+    <text v-if="showLabel" class="vi-label">{{ label }}</text>
+  </view>
+</template>
+
+<script setup>
+import { ref, computed, onUnmounted } from 'vue'
+import { api } from '../../utils/api'
+import { createRecorder, unlockAudio } from '../../utils/voice'
+
+// 语音输入：点一下开始说，停顿约 2 秒自动结束（也可以再点一下结束），识别成文字后交给父组件放进输入框
+const props = defineProps({ showLabel: { type: Boolean, default: false } })
+const emit = defineEmits(['text', 'state'])
+const state = ref('idle') // idle | recording | busy
+const level = ref(0)
+let recorder = null
+
+const label = computed(() => ({ idle: '按一下说话', recording: '说完停顿自动结束', busy: '识别中…' }[state.value]))
+
+function setState(s) {
+  state.value = s
+  emit('state', s)
+}
+
+async function toggle() {
+  if (state.value === 'busy') return
+  if (state.value === 'recording') {
+    recorder && recorder.stop()
+    return
+  }
+  unlockAudio()
+  recorder = recorder || createRecorder({ vad: { silenceMs: 2000, maxMs: 90000 }, onLevel: (v) => (level.value = v) })
+  setState('recording')
+  let rec
+  try {
+    rec = await recorder.start()
+  } catch (e) {
+    setState('idle')
+    uni.showToast({ title: e.message || '无法使用麦克风', icon: 'none', duration: 3000 })
+    return
+  }
+  if (!rec || !rec.spoke) {
+    setState('idle')
+    uni.showToast({ title: '没听到声音，请靠近麦克风再试', icon: 'none' })
+    return
+  }
+  setState('busy')
+  try {
+    const res = await api.transcribe(rec)
+    if (res.text) emit('text', res.text)
+  } catch (e) {
+    uni.showToast({ title: (e.message || '识别失败').slice(0, 40), icon: 'none' })
+  } finally {
+    setState('idle')
+  }
+}
+
+onUnmounted(() => recorder && recorder.destroy())
+</script>
+
+<style lang="scss" scoped>
+.vi {
+  position: relative; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  width: 76rpx; height: 76rpx; border-radius: 50%; background: $tt-soft;
+}
+.vi.rec { background: $tt-primary; }
+.vi.busy { opacity: 0.6; }
+.vi-level { position: absolute; top: 0; left: 0; right: 0; bottom: 0; border-radius: 50%; background: rgba(13, 138, 123, 0.25); transition: transform 0.12s linear; }
+.vi-icon { position: relative; width: 40rpx; height: 40rpx; }
+.vi-label { position: absolute; bottom: -36rpx; white-space: nowrap; font-size: 20rpx; color: $tt-text-3; }
+</style>

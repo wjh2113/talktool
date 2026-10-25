@@ -93,7 +93,7 @@ def _check(resp, what: str):
 
 async def chat(messages: list, capability: str = None, temperature: float = None,
                max_tokens: int = 400, user_id: str = None, idempotency_key: str = None,
-               max_cost: float = None) -> str:
+               max_cost: float = None, thinking: bool = None) -> str:
     payload = {
         **_common(),
         "capability": capability or config.LLM_CAPABILITY,
@@ -102,6 +102,10 @@ async def chat(messages: list, capability: str = None, temperature: float = None
         "temperature": config.LLM_TEMPERATURE if temperature is None else temperature,
         "max_tokens": max_tokens,
     }
+    if thinking is not None:
+        # 网关透传给兼容的上游；结构化工作流要求直接输出，避免推理耗尽正文额度。
+        payload["thinking"] = {"type": "enabled" if thinking else "disabled"}
+        payload["enable_thinking"] = thinking
     if user_id:
         payload["userId"] = user_id
     if idempotency_key:

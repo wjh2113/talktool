@@ -5,6 +5,11 @@
       <view class="tab" :class="{ on: tab === 'users' }" @tap="switchUsers">用户（{{ users.length || '…' }}）</view>
       <view class="tab" :class="{ on: tab === 'catalog' }" @tap="tab = 'catalog'">场景导入</view>
     </view>
+    <view class="advisor-links">
+      <text class="advisor-link" @tap="goPage('/pages/admin-prompts/admin-prompts')">智囊提示词管理 ›</text>
+      <text class="advisor-link" @tap="goPage('/pages/admin-councils/admin-councils')">智囊团配置 ›</text>
+      <text class="advisor-link" @tap="goPage('/pages/admin-advisor-stats/admin-advisor-stats')">问计效果统计 ›</text>
+    </view>
 
     <!-- 邀请码 -->
     <block v-if="tab === 'invites'">
@@ -56,8 +61,8 @@
     <!-- 场景导入 -->
     <block v-else-if="tab === 'catalog'">
       <view class="card form">
-        <text class="block-title">导入场景库 / 表达框架</text>
-        <text class="hint">支持单个 .md，或 .zip（内含多个 md）。默认按标题更新已有公共场景，不会删除库里多出来的内容。</text>
+        <text class="block-title">导入场景库 / 表达框架 / 谋略库</text>
+        <text class="hint">支持单个 .md，或 .zip（内含多个 md）。场景按标题、框架和谋略 / 谋士 / 智囊团按 code 更新或新增，不会删除库里多出来的内容。导入的谋略类内容以后程序升级不会覆盖。</text>
         <text class="label">导入模式</text>
         <view class="mode-row">
           <view class="mode" :class="{ on: importMode === 'upsert' }" @tap="importMode = 'upsert'">更新或新增</view>
@@ -72,6 +77,7 @@
         <text class="meta">模式 {{ importResult.mode }} · 文件 {{ (importResult.files || []).map((f) => f.name + '(' + f.kind + ')').join('、') || '—' }}</text>
         <text class="meta">框架 +{{ importResult.frameworks && importResult.frameworks.added }} / 改 {{ importResult.frameworks && importResult.frameworks.updated }}</text>
         <text class="meta">训练 +{{ importResult.catalog && importResult.catalog.drills_added }} / 改 {{ importResult.catalog && importResult.catalog.drills_updated }} / 跳过 {{ importResult.catalog && importResult.catalog.drills_skipped }}</text>
+        <text v-for="(w, i) in importResult.warnings || []" :key="i" class="meta warn">⚠ {{ w }}</text>
       </view>
     </block>
 
@@ -103,6 +109,7 @@ import { getCurrentUser } from '../../utils/request'
 
 const STATE_TEXT = { active: '可用', used_up: '已用完', expired: '已过期', disabled: '已停用' }
 const tab = ref('invites')
+const goPage = (url) => uni.navigateTo({ url })
 const invites = ref([])
 const users = ref([])
 const fresh = ref([])
@@ -128,7 +135,7 @@ function switchUsers() {
 }
 
 function copyPromptHint() {
-  copy('docs/场景库导入-发给大模型的提示词.md（仓库内）', '路径已复制')
+  copy('场景：docs/场景库导入-发给大模型的提示词.md；谋略库：docs/谋略库导入-发给大模型的提示词.md（仓库内）', '路径已复制')
 }
 
 function pickImport() {
@@ -296,4 +303,7 @@ onPullDownRefresh(async () => {
 .actions { display: flex; gap: 32rpx; margin-top: 14rpx; }
 .act { font-size: 26rpx; color: $tt-primary; &.danger { color: #E5484D; } }
 .empty { text-align: center; padding: 60rpx 0; }
+.advisor-links { display: flex; gap: 32rpx; padding: 8rpx 8rpx 20rpx; }
+.advisor-link { font-size: 26rpx; color: $tt-primary; }
+.warn { color: #B7791F; }
 </style>

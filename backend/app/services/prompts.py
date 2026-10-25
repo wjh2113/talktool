@@ -41,7 +41,7 @@ def build_report_messages(drill: dict, transcript: list, duration_sec: int, metr
 【压力等级】{drill['pressure_level']}
 【训练目标】{drill['training_goal']}
 【推荐表达框架】{drill.get('guide_text') or '（无）'}
-【训练时长】{duration_sec} 秒
+{('【智囊锦囊要点】' + drill['plan_text'] + chr(10)) if drill.get('plan_text') else ''}{('【用户长期表现（之前的训练）】' + drill['longterm_text'] + chr(10)) if drill.get('longterm_text') else ''}【训练时长】{duration_sec} 秒
 【表达数据】{metrics_text or '（无）'}
 
 【对话记录】
@@ -51,7 +51,7 @@ def build_report_messages(drill: dict, transcript: list, duration_sec: int, metr
 - 只评价“用户”的发言，从 {dims} 四个维度各打 1-10 分（整数），要严格、有区分度。
 - highlights：2-3 条做得好的点，要引用或指向用户的具体说法。
 - improvements：2-3 条改进建议，要具体到“可以怎么说”。
-- detail_comment：用 Markdown 写详细点评（80-150 字），可结合表达数据给建议；有推荐框架时点明缺了哪一步，并给一句示范。
+- detail_comment：用 Markdown 写详细点评（80-150 字），可结合表达数据给建议；有推荐框架时点明缺了哪一步，并给一句示范；有智囊锦囊时，点明关键话术说到了哪几句、风险预案用上没有；有长期表现时，和这次对比，点出进步的地方和反复出现的老问题（如同一个口头禅、同一个弱项）。
 - summary：一句话总评（不超过 30 字）。
 
 严格按以下 JSON 结构输出，不要输出任何其他内容（不要 markdown 代码块；字符串里不要再套英文双引号，改用「」；不要尾逗号；必须一次输出完整可解析的 JSON）：

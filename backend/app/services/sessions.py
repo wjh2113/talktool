@@ -155,12 +155,15 @@ async def _synthesize(provider, session_id, text: str, cache: bool = False, voic
 
 
 def _tts_allowed(user_id: str, text: str) -> bool:
-    """只允许朗读系统生成过的内容：本人的收藏、本人报告里的逐句示范、场景示范稿、框架示例。
+    """只允许朗读系统生成过的内容：本人的收藏、本人报告里的逐句示范、场景示范稿、框架示例、本人锦囊里的话术。
     分句预取时会传示范稿的连续子串（≥6 字），同样放行；防止被拿去合成任意文字。"""
     with get_conn() as conn:
         if conn.execute("SELECT 1 FROM note WHERE user_id = ? AND text = ?", (user_id, text)).fetchone():
             return True
         if conn.execute("SELECT 1 FROM drill WHERE sample_script = ? AND sample_script != ''", (text,)).fetchone():
+            return True
+        # 谋略库里“怎么说”的示例
+        if conn.execute("SELECT 1 FROM strategy WHERE how_to_say = ?", (text,)).fetchone():
             return True
         # 表达框架的示例（详情页超长示例只读前 480 字）
         if conn.execute("SELECT 1 FROM framework WHERE example = ? OR substr(example, 1, 480) = ?",
@@ -174,6 +177,11 @@ def _tts_allowed(user_id: str, text: str) -> bool:
         for item in loads(r[0], None) or []:
             if isinstance(item, dict) and item.get("better") == text:
                 return True
+    # 本人锦囊里的话术（整句，或分句朗读时 ≥6 字的连续子串）
+    from .consult import plan_texts
+    for t in plan_texts(user_id):
+        if t == text or (len(text) >= 6 and text in t):
+            return True
     # 分句朗读：连续子串（与小树学堂首句先出声一致）
     if len(text) < 6:
         return False
@@ -361,6 +369,10 @@ async def _report_job(session_id: int, retry: bool = False) -> None:
             s = row_to_dict(conn.execute("SELECT * FROM session WHERE id = ?", (session_id,)).fetchone())
             drill = _load_drill(conn, s["drill_id"])
             drill["guide_text"] = guide_text(conn, s["drill_id"])
+            from .consult import plan_points_for_drill
+            drill["plan_text"] = plan_points_for_drill(conn, drill)
+            from .memory import training_line, training_profile
+            drill["longterm_text"] = training_line(training_profile(conn, s["user_id"], before_id=session_id))
         transcript = loads(s["transcript"], [])
         summary = loads(s.get("metrics"), {}) or metrics_svc.summarize(transcript)
         rep = await report_svc.generate_report(drill, transcript, s["duration_sec"], metrics_svc.describe(summary),
@@ -368,6 +380,9 @@ async def _report_job(session_id: int, retry: bool = False) -> None:
         with get_conn() as conn:
             _save_report(conn, session_id, rep)
             conn.execute("UPDATE session SET report_status = 'ready' WHERE id = ?", (session_id,))
+        if drill.get("consult_id"):
+            from .consult import after_report
+            after_report(drill, s, rep)
     except Exception as e:  # noqa: BLE001
         log.exception("报告生成失败 session=%s：%s", session_id, e)
         with get_conn() as conn:
@@ -508,6 +523,8 @@ def get_session_detail(user_id: str, session_id: int) -> dict:
         drill["frameworks"] = drill_guide(conn, s["drill_id"])
         rep = _report_dict(conn.execute("SELECT * FROM report WHERE session_id = ?", (session_id,)).fetchone())
         prev = _previous_result(conn, user_id, s) if rep else None
+        from .memory import training_profile
+        longterm = training_profile(conn, user_id, before_id=session_id) if rep else {}
         notes = [row_to_dict(n) for n in conn.execute(
             "SELECT id, kind, text FROM note WHERE user_id = ? AND session_id = ?", (user_id, session_id))]
     s["transcript"] = loads(s["transcript"], [])
@@ -515,6 +532,7 @@ def get_session_detail(user_id: str, session_id: int) -> dict:
     s["drill"] = drill
     s["report"] = rep
     s["previous"] = prev
+    s["longterm"] = longterm   # 这场之前（最近 20 场）的平均分和口头禅，报告页做“长期对比”
     s["saved_notes"] = notes
     s["report_status"] = _report_status(s["status"], s.get("report_status"), rep)
     s["summary_line"] = _summary_line(s["status"], rep, s["report_status"])

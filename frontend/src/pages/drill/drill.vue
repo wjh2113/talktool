@@ -67,12 +67,9 @@
     </template>
 
     <template v-if="d.pitfalls && d.pitfalls.length">
-      <text class="block-title">常见误区</text>
+      <text class="block-title">常见误区（{{ d.pitfalls.length }}）</text>
       <view class="card desc pits">
-        <view v-for="(p, i) in d.pitfalls" :key="i" class="pit">
-          <text class="pit-x">✕</text>
-          <text class="pit-t">{{ p }}</text>
-        </view>
+        <PitfallList :items="d.pitfalls" />
       </view>
     </template>
 
@@ -89,6 +86,7 @@ import { onLoad } from '@dcloudio/uni-app'
 import { api } from '../../utils/api'
 import { coverStyle } from '../../utils/format'
 import { unlockAudio } from '../../utils/voice'
+import PitfallList from '../../components/PitfallList/PitfallList.vue'
 
 const d = ref(null)
 const statusBar = ref(uni.getSystemInfoSync().statusBarHeight || 20)
@@ -187,10 +185,7 @@ onLoad(async (q) => {
 .example { margin-top: 20rpx; background: #F7F9FC; border-radius: 12rpx; padding: 20rpx 24rpx; display: flex; flex-direction: column; }
 .ex-k { color: $tt-text-3; font-size: 22rpx; margin-bottom: 8rpx; }
 .ex-v { color: #333; font-size: 28rpx; line-height: 1.7; }
-.pits { display: flex; flex-direction: column; gap: 16rpx; }
-.pit { display: flex; align-items: flex-start; }
-.pit-x { color: #F56C6C; font-size: 26rpx; margin-right: 14rpx; line-height: 1.85; flex-shrink: 0; }
-.pit-t { flex: 1; font-size: 28rpx; }
+.pits { padding-top: 24rpx; padding-bottom: 24rpx; }
 .footer .read { width: 230rpx; flex-shrink: 0; }
 .footer .go { flex: 1; }
 .footer {

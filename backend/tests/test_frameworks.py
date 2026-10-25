@@ -34,6 +34,15 @@ def test_data():
                                   for d in s["drills"] if d["title"] == t and d.get("guide"))
         assert g["frameworks"] and g["pitfalls"], t
         assert all(code in codes for code, _ in g["frameworks"]), t
+    # 资料里的误区：引用都有效，每个话题都挂上了，谈薪框架带上资料的全部 6 条错误
+    from app.pitfalls_data import SECTIONS, FW_SECTIONS, DRILL_SECTIONS
+    used = {k for v in list(FW_SECTIONS.values()) + list(DRILL_SECTIONS.values()) for k in v}
+    assert used == set(SECTIONS), set(SECTIONS) - used
+    assert set(DRILL_SECTIONS) <= set(titles) and set(FW_SECTIONS) <= set(codes)
+    salary = next(f for f in FRAMEWORKS if f["code"] == "salary_talk")
+    assert len(salary["pitfalls"]) >= 9 and "怎么谈工资" in salary["pitfall_source"]
+    assert any(p.startswith("谈的轮次过多") or p.startswith("拉锯轮次太多") for p in salary["pitfalls"])
+    assert all(len(f["pitfalls"]) >= 2 for f in FRAMEWORKS)
     print(f"✓ data：{len(FRAMEWORKS)} 个框架，{len(titles)} 个内置训练都有指南")
 
 
@@ -73,6 +82,9 @@ async def test_service():
     assert [f["code"] for f in drill["frameworks"]][:2] == ["impromptu2", "prep"]
     assert drill["frameworks"][0]["scene_example"] and drill["frameworks"][0]["steps"]
     assert isinstance(drill["pitfalls"], list) and drill["pitfalls"]
+    # 场景自己的误区在前，资料“被 Cue 发言”的误区追加在后
+    assert any("我没想好" in p for p in drill["pitfalls"]) and len(drill["pitfalls"]) > 3
+    assert fw.get_framework("salary_talk")["pitfall_source"]
     with db.get_conn() as c:
         text = fw.guide_text(c, drill["id"])
     assert "即兴发言 2 步走" in text and "稳住+感谢" in text
@@ -136,7 +148,7 @@ class FakeClient:
                  '"frameworks":[{"code":"key_dialog","example":"先摆事实"},{"code":"not_exist","example":"x"}],'
                  '"pitfalls":["一上来就吵","不拿证据"]}')
         elif "四个维度" in p:
-            assert "【推荐表达框架】即兴发言 2 步走" in p and "是否用上了框架" in p
+            assert "【推荐表达框架】即兴发言 2 步走" in p and "推荐框架" in p.split("评估要求")[1]
             c = '{"scores":{"逻辑表达":8,"语言组织":7,"应变能力":6,"情绪管理":8},"summary":"ok","highlights":[],"improvements":[],"detail_comment":"d"}'
         elif "turn_reviews" in p:
             assert "推荐表达框架：即兴发言 2 步走" in p

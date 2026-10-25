@@ -52,6 +52,9 @@ def get_framework(key: str, user_id: str = None) -> dict:
                ORDER BY d.owner_id IS NOT NULL, c.sort_order, s.sort_order, d.sort_order""",
             (f["id"], user_id or "")).fetchall()
     f["drills"] = [row_to_dict(d) for d in drills]
+    from .strategies import related_to_framework
+    f["strategies"] = [{k: s[k] for k in ("code", "name", "school_name", "sub", "caution")}
+                       for s in related_to_framework(f["code"])]
     return f
 
 

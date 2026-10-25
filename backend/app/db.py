@@ -12,6 +12,7 @@ from .seed_more import merge_into
 from .seed_more2 import EXTRA as EXTRA_3
 from .frameworks_data import CATEGORIES as FW_CATEGORIES, FRAMEWORKS
 from .guides_data import GUIDES
+from .pitfalls_data import drill_pitfalls
 
 ALL_CATEGORIES = merge_into(merge_into(CATEGORIES), EXTRA_3)
 
@@ -72,6 +73,16 @@ MIGRATIONS = [
     ("session", "report_status", "TEXT NOT NULL DEFAULT 'none'"),
     ("drill", "pitfalls", "TEXT NOT NULL DEFAULT '[]'"),
     ("app_user", "tts_gender", "TEXT NOT NULL DEFAULT 'male'"),  # male | female
+    ("framework", "pitfall_source", "TEXT NOT NULL DEFAULT ''"),
+    ("drill", "consult_id", "INTEGER"),  # 由智囊锦囊生成的对练
+    # 智囊团二、三期
+    ("consult", "follow_up_at", "TEXT"),                         # 该回来复盘的时间
+    ("consult", "extra_advisors", "TEXT NOT NULL DEFAULT '[]'"),  # 列席的私人谋士
+    ("plan_action", "remind_at", "TEXT"),                         # 行动提醒日期 YYYY-MM-DD
+    ("plan", "rating", "INTEGER"),                                # 1 有用 / -1 没用
+    ("plan", "rating_reason", "TEXT NOT NULL DEFAULT ''"),
+    ("plan", "rated_at", "TEXT"),
+    ("memory_subject", "compacted_at", "TEXT"),
 ]
 
 
@@ -117,6 +128,8 @@ def init_db(reseed: bool = False) -> None:
             empty = True
         added = _sync_seed(conn)
         _sync_frameworks(conn)
+        from .services.advisor_sync import sync_advisor_content
+        sync_advisor_content(conn)
         if added and not empty:
             import logging
             logging.getLogger("talktool").info("已补充 %s 个内置训练场景", added)
@@ -160,13 +173,14 @@ def _sync_frameworks(conn: sqlite3.Connection) -> None:
         vals = (f["name"], f["category"], f["summary"], json.dumps(f["steps"], ensure_ascii=False),
                 f.get("when_to_use", ""), f.get("example", ""), json.dumps(f.get("pitfalls", []), ensure_ascii=False),
                 json.dumps(f.get("tips", []), ensure_ascii=False), f.get("detail", ""), f.get("source", ""),
-                order.get(f["category"], 99) * 1000 + i)
+                f.get("pitfall_source", ""), order.get(f["category"], 99) * 1000 + i)
         if conn.execute("SELECT 1 FROM framework WHERE code = ?", (f["code"],)).fetchone():
             conn.execute("""UPDATE framework SET name=?, category=?, summary=?, steps=?, when_to_use=?, example=?,
-                            pitfalls=?, tips=?, detail=?, source=?, sort_order=? WHERE code=?""", vals + (f["code"],))
+                            pitfalls=?, tips=?, detail=?, source=?, pitfall_source=?, sort_order=? WHERE code=?""", vals + (f["code"],))
         else:
             conn.execute("""INSERT INTO framework(name, category, summary, steps, when_to_use, example, pitfalls, tips,
-                            detail, source, sort_order, code) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""", vals + (f["code"],))
+                            detail, source, pitfall_source, sort_order, code) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                         vals + (f["code"],))
     ids = {r[0]: r[1] for r in conn.execute("SELECT code, id FROM framework")}
     guides = dict(GUIDES)
     for cat in ALL_CATEGORIES:
@@ -176,7 +190,7 @@ def _sync_frameworks(conn: sqlite3.Connection) -> None:
                     guides[d["title"]] = d["guide"]
     for title, g in guides.items():
         for (drill_id,) in conn.execute("SELECT id FROM drill WHERE title = ? AND owner_id IS NULL", (title,)).fetchall():
-            set_drill_guide(conn, drill_id, g.get("frameworks", []), g.get("pitfalls", []), ids)
+            set_drill_guide(conn, drill_id, g.get("frameworks", []), drill_pitfalls(title, g.get("pitfalls", [])), ids)
 
 
 def set_drill_guide(conn, drill_id: int, frameworks: list, pitfalls: list, ids: dict = None) -> None:

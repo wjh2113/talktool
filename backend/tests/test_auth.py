@@ -273,7 +273,7 @@ def test_routes(me):
             return lambda f: f
         def _route(self, *a, **k):
             return lambda f: f
-        get = post = put = delete = _route
+        get = post = put = patch = delete = _route
 
     class HTTPException(Exception):
         def __init__(self, status, detail=""):

@@ -30,11 +30,9 @@
     </view>
 
     <template v-if="f.pitfalls && f.pitfalls.length">
-      <text class="block-title">常见误区</text>
+      <text class="block-title">常见误区（{{ f.pitfalls.length }}）</text>
       <view class="card box">
-        <view v-for="(p, i) in f.pitfalls" :key="i" class="line">
-          <text class="x">✕</text><text class="txt">{{ p }}</text>
-        </view>
+        <PitfallList :items="f.pitfalls" :source="f.pitfall_source" />
       </view>
     </template>
 
@@ -50,6 +48,13 @@
     <template v-if="f.detail">
       <text class="block-title">深入了解</text>
       <view class="card box"><text class="txt">{{ f.detail }}</text></view>
+    </template>
+
+    <template v-if="f.strategies && f.strategies.length">
+      <text class="block-title">配合这些谋略</text>
+      <view class="card box strat-box">
+        <text v-for="st in f.strategies" :key="st.code" class="strat-chip" @tap="openStrategy(st.code)">{{ st.school_name }} · {{ st.name }}</text>
+      </view>
     </template>
 
     <template v-if="f.drills && f.drills.length">
@@ -73,6 +78,7 @@ import { ref, computed } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
 import { api } from '../../utils/api'
 import ReadAloud from '../../components/ReadAloud/ReadAloud.vue'
+import PitfallList from '../../components/PitfallList/PitfallList.vue'
 
 const f = ref(null)
 const error = ref(false)
@@ -97,6 +103,8 @@ async function save() {
   saved.value = true
   uni.showToast({ title: '已收藏到练习本', icon: 'none' })
 }
+
+const openStrategy = (code) => uni.navigateTo({ url: `/pages/strategy/strategy?code=${code}` })
 
 function openDrill(d) {
   uni.navigateTo({ url: `/pages/drill/drill?id=${d.id}` })
@@ -131,7 +139,6 @@ onLoad((q) => {
 .example { background: $tt-soft; display: flex; flex-direction: column; }
 .act { color: $tt-primary; font-size: 26rpx; margin-top: 20rpx; }
 .line { display: flex; align-items: flex-start; padding: 6rpx 0; }
-.x { color: #F56C6C; margin-right: 14rpx; font-size: 26rpx; line-height: 1.85; }
 .ok { color: #19BE6B; margin-right: 14rpx; font-size: 26rpx; line-height: 1.85; }
 .drill { margin: 0 32rpx 20rpx; padding: 28rpx 36rpx; display: flex; flex-direction: column; }
 .drill-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8rpx; }
@@ -140,4 +147,6 @@ onLoad((q) => {
 .drill-ex { font-size: 26rpx; color: $tt-text-2; line-height: 1.7; margin-top: 12rpx; }
 .bottom { height: 60rpx; }
 .state { text-align: center; padding: 160rpx 0; }
+.strat-box { display: flex; flex-direction: row; flex-wrap: wrap; gap: 14rpx; }
+.strat-chip { font-size: 24rpx; color: $tt-primary; background: $tt-tag-bg; padding: 8rpx 18rpx; border-radius: 20rpx; }
 </style>

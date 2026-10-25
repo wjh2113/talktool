@@ -38,6 +38,14 @@
       </view>
     </view>
 
+    <view class="card quick advisor-entry" @tap="goAdvisor">
+      <view>
+        <text class="quick-title">问智囊团</text>
+        <text class="quick-sub">遇到难事？毛选、孙子、三十六计、谈判专家帮你出主意：怎么做、怎么说</text>
+      </view>
+      <text class="chevron">›</text>
+    </view>
+
     <view class="card quick fw-entry" @tap="goFrameworks">
       <view>
         <text class="quick-title">表达框架库</text>
@@ -87,6 +95,11 @@ const PICK_TITLES = ['临时点名发言', '自我介绍', '平息客户怒火',
 
 async function load() {
   api.stats().then((s) => (stats.value = s)).catch(() => {})
+  // 底栏「智囊」角标：有事该跟进时提醒
+  api.advisorDue().then((r) => {
+    if (r.count) uni.setTabBarBadge({ index: 2, text: String(r.count), fail: () => {} })
+    else uni.removeTabBarBadge({ index: 2, fail: () => {} })
+  }).catch(() => {})
   if (picks.value.length) return
   api.frameworks().then((r) => (fwTotal.value = r.total)).catch(() => {})
   const cats = await api.categories()
@@ -99,6 +112,7 @@ async function load() {
 const goScenes = () => uni.switchTab({ url: '/pages/scenes/scenes' })
 const goCustom = () => uni.navigateTo({ url: '/pages/custom/custom' })
 const goNotebook = () => uni.switchTab({ url: '/pages/notebook/notebook' })
+const goAdvisor = () => uni.switchTab({ url: '/pages/advisor/advisor' })
 const goFrameworks = () => uni.navigateTo({ url: '/pages/frameworks/frameworks' })
 const goRecords =() => uni.navigateTo({ url: '/pages/records/records' })
 const openScenario = (s) => uni.navigateTo({ url: `/pages/scenario/scenario?id=${s.id}` })
@@ -143,4 +157,5 @@ onShow(load)
 .pick-body { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .pick-title { font-size: 30rpx; font-weight: 700; margin-bottom: 8rpx; }
 .pick-sub { font-size: 25rpx; color: $tt-text-2; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.advisor-entry { border-left: 8rpx solid $tt-primary; }
 </style>

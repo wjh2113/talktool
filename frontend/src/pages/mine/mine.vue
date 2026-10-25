@@ -14,6 +14,18 @@
         <text>管理后台（邀请码 / 用户 / 场景导入）</text>
         <text class="chevron">›</text>
       </view>
+      <view v-if="user.role === 'admin'" class="row" @tap="go('/pages/admin-prompts/admin-prompts')">
+        <text>智囊提示词管理</text>
+        <text class="chevron">›</text>
+      </view>
+      <view v-if="user.role === 'admin'" class="row" @tap="go('/pages/admin-councils/admin-councils')">
+        <text>智囊团配置</text>
+        <text class="chevron">›</text>
+      </view>
+      <view class="row" @tap="go('/pages/memory/memory')">
+        <text>智囊记得的（长期记忆）</text>
+        <text class="chevron">›</text>
+      </view>
       <view class="row" @tap="go('/pages/records/records')">
         <text>训练记录</text>
         <text class="chevron">›</text>

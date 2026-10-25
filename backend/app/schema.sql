@@ -145,6 +145,7 @@ CREATE TABLE IF NOT EXISTS framework (
     tips         TEXT    NOT NULL DEFAULT '[]',
     detail       TEXT    NOT NULL DEFAULT '',     -- 详细说明（写作/讲述要点）
     source       TEXT    NOT NULL DEFAULT '',
+    pitfall_source TEXT  NOT NULL DEFAULT '',     -- 常见误区出自资料的哪一节
     sort_order   INTEGER NOT NULL DEFAULT 0
 );
 
@@ -157,3 +158,168 @@ CREATE TABLE IF NOT EXISTS drill_framework (
     PRIMARY KEY (drill_id, framework_id)
 );
 CREATE INDEX IF NOT EXISTS idx_df_framework ON drill_framework(framework_id);
+
+-- ============ AI 智囊团 ============
+-- 谋略库（内置按 code 同步；customized=1 表示后台改过或导入的，启动同步不覆盖）
+CREATE TABLE IF NOT EXISTS strategy (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    code            TEXT    NOT NULL UNIQUE,
+    school          TEXT    NOT NULL,
+    name            TEXT    NOT NULL,
+    sub             TEXT    NOT NULL DEFAULT '',     -- 如“第1计 · 胜战计”
+    origin          TEXT    NOT NULL DEFAULT '',     -- 原文
+    plain           TEXT    NOT NULL DEFAULT '',     -- 白话
+    domains         TEXT    NOT NULL DEFAULT '[]',
+    how_to_do       TEXT    NOT NULL DEFAULT '[]',
+    how_to_say      TEXT    NOT NULL DEFAULT '',
+    framework_codes TEXT    NOT NULL DEFAULT '[]',
+    misuses         TEXT    NOT NULL DEFAULT '',
+    caution         INTEGER NOT NULL DEFAULT 0,      -- 1 = 慎用：只用于识别和防范
+    customized      INTEGER NOT NULL DEFAULT 0,
+    enabled         INTEGER NOT NULL DEFAULT 1,
+    sort_order      INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_strategy_school ON strategy(school);
+
+-- 谋士
+CREATE TABLE IF NOT EXISTS advisor (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    code        TEXT    NOT NULL UNIQUE,
+    name        TEXT    NOT NULL,
+    avatar      TEXT    NOT NULL DEFAULT '',
+    schools     TEXT    NOT NULL DEFAULT '[]',
+    persona     TEXT    NOT NULL DEFAULT '',
+    style       TEXT    NOT NULL DEFAULT '',
+    owner_id    TEXT,                               -- NULL = 内置
+    customized  INTEGER NOT NULL DEFAULT 0,
+    sort_order  INTEGER NOT NULL DEFAULT 0
+);
+
+-- 智囊团（code 同时是意图识别的大类；prompt key = council.<code>）
+CREATE TABLE IF NOT EXISTS council (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    code         TEXT    NOT NULL UNIQUE,
+    name         TEXT    NOT NULL,
+    icon         TEXT    NOT NULL DEFAULT '',
+    description  TEXT    NOT NULL DEFAULT '',
+    advisors     TEXT    NOT NULL DEFAULT '[]',
+    schools      TEXT    NOT NULL DEFAULT '[]',     -- 谋略子库：按体系
+    domains      TEXT    NOT NULL DEFAULT '[]',     -- 谋略子库：按领域
+    requirement  TEXT    NOT NULL DEFAULT '',
+    examples     TEXT    NOT NULL DEFAULT '[]',
+    enabled      INTEGER NOT NULL DEFAULT 1,
+    customized   INTEGER NOT NULL DEFAULT 0,
+    sort_order   INTEGER NOT NULL DEFAULT 0
+);
+
+-- 提示词版本（没有 active 版本的 key 用代码里的默认版）
+CREATE TABLE IF NOT EXISTS prompt_template (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    key          TEXT    NOT NULL,
+    version      INTEGER NOT NULL,
+    system       TEXT    NOT NULL DEFAULT '',
+    user_template TEXT   NOT NULL DEFAULT '',
+    capability   TEXT    NOT NULL DEFAULT '',
+    max_tokens   INTEGER NOT NULL DEFAULT 0,
+    temperature  REAL,
+    status       TEXT    NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','active','archived')),
+    note         TEXT    NOT NULL DEFAULT '',
+    updated_by   INTEGER,
+    created_at   TEXT    NOT NULL,
+    UNIQUE (key, version)
+);
+CREATE INDEX IF NOT EXISTS idx_prompt_key ON prompt_template(key, status);
+
+-- 问计
+CREATE TABLE IF NOT EXISTS consult (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id           TEXT    NOT NULL,
+    title             TEXT    NOT NULL DEFAULT '',
+    council_code      TEXT    NOT NULL DEFAULT '',
+    intent            TEXT    NOT NULL DEFAULT '{}',
+    situation_summary TEXT    NOT NULL DEFAULT '',
+    status            TEXT    NOT NULL DEFAULT 'asking' CHECK (status IN ('asking','clarifying','routed','planned','safety','failed')),
+    case_id           INTEGER,                        -- 关联的事件线（memory_subject）
+    follow_up_at      TEXT,                           -- 该回来复盘的时间（按紧急程度推算）
+    extra_advisors    TEXT    NOT NULL DEFAULT '[]',  -- 列席的私人谋士 code
+    created_at        TEXT    NOT NULL,
+    updated_at        TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_consult_user ON consult(user_id, updated_at);
+
+CREATE TABLE IF NOT EXISTS consult_message (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    consult_id  INTEGER NOT NULL REFERENCES consult(id) ON DELETE CASCADE,
+    role        TEXT    NOT NULL CHECK (role IN ('user','advisor')),
+    kind        TEXT    NOT NULL DEFAULT 'text',      -- ask | answer | clarify | plan | reply | safety | review | route | roundtable
+    text        TEXT    NOT NULL DEFAULT '',
+    data        TEXT    NOT NULL DEFAULT '{}',
+    plan_id     INTEGER,
+    created_at  TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cmsg_consult ON consult_message(consult_id, id);
+
+-- 锦囊（每次修改存新版本）
+CREATE TABLE IF NOT EXISTS plan (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    consult_id      INTEGER NOT NULL REFERENCES consult(id) ON DELETE CASCADE,
+    version         INTEGER NOT NULL,
+    content         TEXT    NOT NULL DEFAULT '{}',
+    strategy_codes  TEXT    NOT NULL DEFAULT '[]',
+    memory_refs     TEXT    NOT NULL DEFAULT '[]',
+    prompt_versions TEXT    NOT NULL DEFAULT '{}',
+    drill_id        INTEGER,                         -- 由这版锦囊生成的对练场景
+    rating          INTEGER,                         -- 用户评价：1 有用 / -1 没用
+    rating_reason   TEXT    NOT NULL DEFAULT '',
+    rated_at        TEXT,
+    created_at      TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_plan_consult ON plan(consult_id, version);
+
+CREATE TABLE IF NOT EXISTS plan_action (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    plan_id     INTEGER NOT NULL REFERENCES plan(id) ON DELETE CASCADE,
+    text        TEXT    NOT NULL,
+    due_hint    TEXT    NOT NULL DEFAULT '',
+    done        INTEGER NOT NULL DEFAULT 0,
+    result      TEXT    NOT NULL DEFAULT '',
+    sort_order  INTEGER NOT NULL DEFAULT 0,
+    done_at     TEXT,
+    remind_at   TEXT                                  -- 提醒日期 YYYY-MM-DD
+);
+
+-- 长期记忆：人物卡 / 事件线的“卡头”
+CREATE TABLE IF NOT EXISTS memory_subject (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     TEXT    NOT NULL,
+    kind        TEXT    NOT NULL CHECK (kind IN ('person','case')),
+    name        TEXT    NOT NULL,
+    aliases     TEXT    NOT NULL DEFAULT '[]',
+    summary     TEXT    NOT NULL DEFAULT '',
+    status      TEXT    NOT NULL DEFAULT 'open',     -- case: open | done | dormant
+    last_seen   TEXT    NOT NULL,
+    compacted_at TEXT,                               -- 上次整理（压缩）的时间
+    created_at  TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_msubject_user ON memory_subject(user_id, kind);
+
+-- 长期记忆：一条一行（profile = 我的档案；fact = 人物卡上的事；event = 事件线进展）
+CREATE TABLE IF NOT EXISTS memory_item (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     TEXT    NOT NULL,
+    type        TEXT    NOT NULL CHECK (type IN ('profile','fact','event')),
+    subject_id  INTEGER REFERENCES memory_subject(id) ON DELETE CASCADE,
+    text        TEXT    NOT NULL,
+    source      TEXT    NOT NULL DEFAULT '',          -- 出处：哪次问计 / 训练、哪天
+    consult_id  INTEGER,
+    pinned      INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT    NOT NULL,
+    updated_at  TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mitem_user ON memory_item(user_id, type);
+
+CREATE TABLE IF NOT EXISTS memory_setting (
+    user_id     TEXT    PRIMARY KEY,
+    paused      INTEGER NOT NULL DEFAULT 0,           -- 默认开启
+    updated_at  TEXT    NOT NULL
+);
