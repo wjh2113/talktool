@@ -63,6 +63,14 @@ export const api = {
   addNote: (data) => request('/api/notes', { method: 'POST', data }),
   deleteNote: (id) => request(`/api/notes/${id}`, { method: 'DELETE' }),
 
+  submitGeneration: (data) => request('/api/advisor/jobs', { method: 'POST', data, silent: true, timeout: 12000 }),
+  findGeneration: (key, cid) => request('/api/advisor/jobs/find?' + (key ? 'request_key=' + encodeURIComponent(key) : 'consult_id=' + cid), { silent: true, timeout: 12000 }),
+  generation: (id) => request('/api/advisor/jobs/' + id, { silent: true, timeout: 12000 }),
+  notificationConfig: () => request('/api/notifications/config', { silent: true }),
+  subscribePush: (data) => request('/api/notifications/subscribe', { method: 'POST', data }),
+  unsubscribePush: (endpoint) => request('/api/notifications/unsubscribe', { method: 'POST', data: { endpoint }, silent: true }),
+  reminders: () => request('/api/notifications/reminders', { silent: true }),
+
   // AI 智囊团
   transcribe: (rec) => uploadAudio('/api/transcribe', rec),
   advisorHome: () => request('/api/advisor/home'),

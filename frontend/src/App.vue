@@ -1,11 +1,26 @@
 <script setup>
-import { onLaunch } from '@dcloudio/uni-app'
+import { onLaunch, onShow, onHide } from '@dcloudio/uni-app'
+import { setupNotifications, syncNotifications } from './utils/notifications'
 import { getToken, goLogin } from './utils/request'
 
 onLaunch(() => {
+  for (const name of ['navigateTo', 'navigateBack', 'redirectTo', 'reLaunch', 'switchTab']) {
+    uni.addInterceptor(name, { invoke: () => { uni.$emit('tt:page-hide') } })
+  }
   // 没登录 → 去登录页（令牌过期由接口 401 统一处理）
   if (!getToken()) setTimeout(goLogin, 0)
+  setupNotifications().catch(() => {})
+  // #ifdef APP-PLUS
+  if (plus.push) plus.push.addEventListener('click', (message) => {
+    try {
+      const payload = typeof message.payload === 'string' ? JSON.parse(message.payload) : message.payload
+      if (payload && Number(payload.consult_id)) uni.navigateTo({ url: '/pages/consult/consult?id=' + Number(payload.consult_id) + '&review=1' })
+    } catch (_) {}
+  })
+  // #endif
 })
+onShow(() => syncNotifications().catch(() => {}))
+onHide(() => uni.$emit('tt:page-hide'))
 </script>
 
 <style lang="scss">
@@ -64,4 +79,11 @@ page {
   overflow: hidden;
 }
 .muted { color: $tt-text-3; font-size: 24rpx; }
+</style>
+
+<style lang="scss">
+@media (min-width: 900px) {
+  uni-page-body > .page { max-width: 1120px; margin-left: auto; margin-right: auto; box-sizing: border-box; }
+  uni-page-body { background: #e8f0ed; min-height: 100vh; }
+}
 </style>

@@ -104,3 +104,6 @@ CORS_ORIGINS = [o.strip() for o in _env("CORS_ORIGINS", "*").split(",") if o.str
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+
+# 标准 Web Push 的公开联系地址；签名私钥自动生成在 DATA_DIR，不进版本库。
+WEBPUSH_SUBJECT = _env("WEBPUSH_SUBJECT", "https://talk.aidigitcloud.cn")

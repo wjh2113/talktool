@@ -56,11 +56,11 @@
 
 <script setup>
 import { ref, computed } from 'vue'
-import { onLoad, onUnload } from '@dcloudio/uni-app'
+import { onLoad, onUnload, onShow, onHide } from '@dcloudio/uni-app'
 import { api } from '../../utils/api'
 import { absUrl } from '../../utils/request'
 import { mmss } from '../../utils/format'
-import { createRecorder, playAudio, stopAudio, simulateSpeaking } from '../../utils/voice'
+import { createRecorder, playAudio, stopAudio, simulateSpeaking, unlockAudio } from '../../utils/voice'
 
 /**
  * 状态机：connecting → ai（AI 讲话中）→ listen（可以说话）→ user（用户讲话中）
@@ -79,12 +79,17 @@ const showFw = ref(false)
 const frameworks = computed(() => (drill.value && drill.value.frameworks) || [])
 
 let sessionId = null
+let initialDrillId = null
 let alive = true
 let ended = false
 let manualStop = false
 let startTs = 0
 let timer = null
 let pinger = null
+let foreground = true
+let epoch = 0
+let pendingAi = null
+let turnPending = false
 
 const recorder = createRecorder({
   onSpeechStart: () => { if (state.value === 'listen') state.value = 'user' },
@@ -102,30 +107,41 @@ const stateTitle = computed(() => ({
   user: '正在聆听…',
   thinking: 'AI 思考中…',
   ending: '正在生成报告…',
+  paused: '训练已暂停',
   error: '连接中断'
 }[state.value]))
+const nativeRecording = ref(false)
+// #ifdef APP-PLUS
+nativeRecording.value = true
+// #endif
 const hintText = computed(() => ({
   connecting: '请稍候，马上开始',
   ai: '请等提示“可以说话”后再回答',
-  listen: '直接开口说话，说完停顿片刻会自动发送',
-  user: '说完停顿片刻自动发送，也可点击麦克风结束本轮',
+  listen: nativeRecording.value ? '请开口说话，说完点击麦克风发送' : '直接开口说话，说完停顿片刻会自动发送',
+  user: nativeRecording.value ? '说完点击麦克风发送' : '说完停顿片刻自动发送，也可点击麦克风结束本轮',
   thinking: '正在识别你的回答…',
   ending: '请勿关闭页面',
+  paused: '点击麦克风继续；离开页面时已关闭录音',
   error: '点击麦克风重试'
 }[state.value]))
 
 async function aiSpeak(ai) {
   if (!alive || !ai) return
+  pendingAi = ai
+  if (!foreground) { state.value = 'paused'; return }
+  const current = epoch
   state.value = 'ai'
   caption.value = ai.text
   let ok = false
   if (ai.audio_url) ok = await playAudio(absUrl(ai.audio_url))
-  if (!ok && alive) await simulateSpeaking(ai.text)
-  if (alive) listen()
+  if (!alive || !foreground || current !== epoch) return
+  if (!ok) await simulateSpeaking(ai.text)
+  if (alive && foreground && current === epoch) { pendingAi = null; listen() }
 }
 
 async function listen() {
-  if (!alive) return
+  if (!alive || !foreground) return
+  const current = epoch
   state.value = 'listen'
   manualStop = false
   level.value = 0
@@ -133,23 +149,25 @@ async function listen() {
   try {
     rec = await recorder.start()
   } catch (e) {
-    if (!alive) return
+    if (!alive || !foreground || current !== epoch) return
     uni.showToast({ title: e.message || '无法使用麦克风', icon: 'none', duration: 3000 })
     state.value = 'error'
     return
   }
-  if (!alive) return
+  if (!alive || !foreground || current !== epoch || !rec) return
   if (!rec.spoke && !manualStop) return listen() // 长时间没开口，继续等
   state.value = 'thinking'
   let res
+  turnPending = true
   try {
     res = await api.turn(sessionId, rec)
   } catch (e) {
-    if (!alive) return
+    if (!alive || !foreground) return
     uni.showToast({ title: (e.message || '发送失败').slice(0, 40), icon: 'none', duration: 3000 })
     return listen()
-  }
+  } finally { turnPending = false }
   if (!alive) return
+  if (!foreground) { if (res.ai) pendingAi = res.ai; state.value = 'paused'; return }
   if (res.empty) {
     uni.showToast({ title: res.reason === 'no_speech' ? '没听到声音，请靠近麦克风再说一次' : '没听清，请再说一次', icon: 'none' })
     return listen()
@@ -158,6 +176,12 @@ async function listen() {
 }
 
 function onMicTap() {
+  if (state.value === 'paused') {
+    if (!sessionId) return uni.redirectTo({ url: '/pages/train/train?drillId=' + initialDrillId })
+    if (turnPending) return uni.showToast({ title: '上轮回答仍在处理，请稍候', icon: 'none' })
+    unlockAudio()
+    return pendingAi ? aiSpeak(pendingAi) : listen()
+  }
   if (state.value === 'user' || state.value === 'listen') {
     manualStop = true
     recorder.stop()
@@ -209,6 +233,7 @@ async function measurePing() {
 }
 
 onLoad(async (q) => {
+  initialDrillId = q.drillId
   measurePing()
   pinger = setInterval(measurePing, 3000)
   try {
@@ -225,6 +250,7 @@ onLoad(async (q) => {
     timer = setInterval(() => (elapsed.value = Math.floor((Date.now() - startTs) / 1000)), 500)
     aiSpeak(st.ai)
   } catch (e) {
+    if (!alive || !foreground) return
     state.value = 'error'
     uni.showModal({
       title: '无法开始训练',
@@ -234,6 +260,21 @@ onLoad(async (q) => {
     })
   }
 })
+
+function pauseTraining() {
+  foreground = false
+  epoch++
+  stopAudio()
+  recorder.cancel()
+  if (alive && !ended) state.value = 'paused'
+}
+onHide(pauseTraining)
+onShow(() => { foreground = true })
+// #ifdef H5
+function visibility() { if (document.hidden) pauseTraining(); else foreground = true }
+document.addEventListener('visibilitychange', visibility)
+onUnload(() => document.removeEventListener('visibilitychange', visibility))
+// #endif
 
 onUnload(() => {
   // 未点“结束训练”就离开 → 记为中途退出（无有效对话时为“主动放弃”）

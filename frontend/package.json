@@ -9,7 +9,8 @@
     "build:app": "uni build -p app",
     "dev:mp-weixin": "uni -p mp-weixin",
     "build:mp-weixin": "uni build -p mp-weixin",
-    "uvm": "npx @dcloudio/uvm@latest"
+    "uvm": "npx @dcloudio/uvm@latest",
+    "test:recovery": "node tests/recovery.cjs"
   },
   "dependencies": {
     "@dcloudio/uni-app": "vue3",
@@ -26,6 +27,7 @@
     "@dcloudio/uni-stacktracey": "vue3",
     "@dcloudio/vite-plugin-uni": "vue3",
     "@vue/runtime-core": "^3.4.21",
+    "playwright": "^1.64.1",
     "sass": "^1.77.0",
     "vite": "5.2.8"
   }

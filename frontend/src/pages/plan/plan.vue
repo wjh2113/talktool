@@ -134,6 +134,7 @@
 import { ref, computed } from 'vue'
 import { onLoad, onShow } from '@dcloudio/uni-app'
 import { api } from '../../utils/api'
+import { syncNotifications } from '../../utils/notifications'
 import ReadAloud from '../../components/ReadAloud/ReadAloud.vue'
 
 const c = ref(null)
@@ -153,6 +154,7 @@ async function setRemind(a, date) {
   a.remind_at = date || null
   try {
     await api.updateAction(a.id, { remind_at: date || '' })
+    syncNotifications().catch(() => {})
     if (date) uni.showToast({ title: `${date.slice(5)} 会在智囊页提醒你`, icon: 'none' })
   } catch (e) {
     a.remind_at = old
@@ -193,6 +195,7 @@ function debate() {
 async function load() {
   c.value = await api.consult(cid, version || undefined)
   p.value = c.value.plan
+  syncNotifications().catch(() => {})
 }
 
 function loadVersion(v) {
@@ -205,6 +208,7 @@ async function toggle(a) {
   a.done = done
   try {
     await api.updateAction(a.id, { done })
+    syncNotifications().catch(() => {})
     if (done) uni.showToast({ title: '已记到事件线', icon: 'none' })
   } catch (e) {
     a.done = !done
@@ -220,6 +224,7 @@ function writeResult(a) {
       if (r.confirm && r.content) {
         await api.updateAction(a.id, { done: true, result: r.content })
         a.result = r.content
+        syncNotifications().catch(() => {})
       }
     }
   })

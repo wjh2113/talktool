@@ -323,3 +323,37 @@ CREATE TABLE IF NOT EXISTS memory_setting (
     paused      INTEGER NOT NULL DEFAULT 0,           -- 默认开启
     updated_at  TEXT    NOT NULL
 );
+
+-- 持久化生成任务：请求重放不会重复运行，同一问计串行生成。
+CREATE TABLE IF NOT EXISTS generation_job (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    request_key TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    consult_id INTEGER REFERENCES consult(id) ON DELETE CASCADE,
+    payload TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'queued',
+    stage TEXT NOT NULL DEFAULT '等待处理',
+    error TEXT NOT NULL DEFAULT '',
+    baseline INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(user_id, request_key)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_job_active ON generation_job(consult_id)
+    WHERE consult_id IS NOT NULL AND status IN ('queued', 'running');
+CREATE INDEX IF NOT EXISTS idx_job_user ON generation_job(user_id, created_at);
+
+CREATE TABLE IF NOT EXISTS push_subscription (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL,
+    endpoint TEXT NOT NULL UNIQUE,
+    subscription TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS push_delivery (
+    subscription_id INTEGER NOT NULL REFERENCES push_subscription(id) ON DELETE CASCADE,
+    reminder_key TEXT NOT NULL,
+    delivered_at TEXT NOT NULL,
+    PRIMARY KEY(subscription_id, reminder_key)
+);

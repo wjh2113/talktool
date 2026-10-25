@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from . import config
 from .db import init_db
 from .services import auth, catalog_import, frameworks, library, maintenance, practice
+from .services import jobs, notifications
 from .services import advisor_admin, advisor_stats, consult, memory, my_advisors, prompt_store, strategies, workflow
 from .services import sessions as svc
 from .services.gateway import GatewayError
@@ -32,6 +33,9 @@ _bg = set()
 async def _startup():
     init_db()
     auth.bootstrap_admin()
+    jobs.recover()
+    for work in (jobs.loop(), notifications.loop()):
+        _bg.add(asyncio.create_task(work))
     n = svc.recover_pending_reports()
     if n:
         log.info("有 %s 份报告在上次重启时中断，已标记为失败，可在报告页重新生成", n)
@@ -39,6 +43,23 @@ async def _startup():
     _bg.add(t)
     mode = "MOCK（未配置 GATEWAY_API_KEY）" if config.MOCK else f"网关 {config.GATEWAY_BASE_URL}"
     log.info("TalkTool 启动，语音模式：%s", mode)
+
+
+@app.on_event("shutdown")
+async def _shutdown():
+    for task in _bg:
+        task.cancel()
+    await asyncio.gather(*_bg, return_exceptions=True)
+    _bg.clear()
+    await jobs.shutdown()
+
+
+class JobIn(BaseModel):
+    request_key: str
+    kind: str
+    consult_id: Optional[int] = None
+    payload: dict = {}
+
 
 
 def _err(status):
@@ -72,6 +93,46 @@ def admin_user(user: dict = Depends(current_user)) -> dict:
 def client_ip(request: Request) -> Optional[str]:
     # nginx 反代 + uvicorn --proxy-headers 时，client.host 就是真实 IP
     return request.client.host if request.client else None
+
+
+@app.post("/api/advisor/jobs", status_code=202)
+def advisor_submit_job(body: JobIn, user: dict = Depends(current_user)):
+    return jobs.submit(user["uid"], body.request_key, body.kind, body.consult_id, body.payload)
+
+
+@app.get("/api/advisor/jobs/find")
+def advisor_find_job(request_key: Optional[str] = None, consult_id: Optional[int] = None, user: dict = Depends(current_user)):
+    return jobs.find(user["uid"], request_key, consult_id)
+
+
+@app.get("/api/advisor/jobs/{job_id}")
+def advisor_job(job_id: str, user: dict = Depends(current_user)):
+    return jobs.get(user["uid"], job_id)
+
+
+class SubscriptionIn(BaseModel):
+    endpoint: str
+    keys: dict = {}
+
+
+@app.get("/api/notifications/config")
+def notification_config(user: dict = Depends(current_user)):
+    return notifications.public_config()
+
+
+@app.post("/api/notifications/subscribe")
+def notification_subscribe(body: SubscriptionIn, user: dict = Depends(current_user)):
+    return notifications.subscribe(user["uid"], body.dict())
+
+
+@app.post("/api/notifications/unsubscribe")
+def notification_unsubscribe(body: SubscriptionIn, user: dict = Depends(current_user)):
+    return notifications.unsubscribe(user["uid"], body.endpoint)
+
+
+@app.get("/api/notifications/reminders")
+def notification_reminders(user: dict = Depends(current_user)):
+    return notifications.reminders(user["uid"])
 
 
 # ---------------- 基础 ----------------

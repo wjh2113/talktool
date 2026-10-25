@@ -12,7 +12,12 @@
 
     <view v-if="state === 'recording'" class="ra-tip">
       <view class="ra-level"><view class="ra-level-in" :style="{ width: levelPct + '%' }" /></view>
+      <!-- #ifdef APP-PLUS -->
+      <text>读完后再点一次按钮结束录音</text>
+      <!-- #endif -->
+      <!-- #ifndef APP-PLUS -->
       <text>读完停顿 2 秒自动提交，或再点一次按钮结束</text>
+      <!-- #endif -->
     </view>
 
     <view v-if="result" class="ra-result">
@@ -32,6 +37,7 @@
 
 <script setup>
 import { ref, computed, watch, onUnmounted } from 'vue'
+import { onHide } from '@dcloudio/uni-app'
 import { api } from '../../utils/api'
 import { createRecorder, stopAudio, unlockAudio } from '../../utils/voice'
 import { prefetch, speakDemo, stopDemo } from '../../utils/demoTts'
@@ -50,6 +56,7 @@ const result = ref(null)
 const level = ref(0)
 const bestScore = ref(props.best)
 let recorder = null
+let generation = 0
 
 const levelPct = computed(() => Math.min(100, Math.round(level.value * 600)))
 const listenLabel = computed(() =>
@@ -114,18 +121,23 @@ async function onRecord() {
   stopAudio()
   playing.value = false
   loading.value = false
+  const token = ++generation
   recorder = createRecorder({ vad: { silenceMs: 2200, maxMs: 120000 }, onLevel: (v) => (level.value = v) })
   state.value = 'recording'
   try {
     const rec = await recorder.start()
+    if (!rec || token !== generation) return
     state.value = 'scoring'
     const res = await api.pronounce(rec, props.text, props.noteId)
+    if (token !== generation) return
     result.value = res
     if (typeof res.score === 'number') bestScore.value = Math.max(bestScore.value || 0, res.score)
     emit('scored', res)
   } catch (e) {
+    if (token !== generation) return
     uni.showToast({ title: (e && e.message ? e.message : '跟读失败').slice(0, 40), icon: 'none', duration: 2500 })
   } finally {
+    if (token !== generation) return
     recorder && recorder.destroy()
     recorder = null
     state.value = 'idle'
@@ -133,10 +145,24 @@ async function onRecord() {
   }
 }
 
-onUnmounted(() => {
+function cleanup() {
+  generation++
   recorder && recorder.destroy()
+  recorder = null
   if (playing.value || loading.value) stopDemo()
-})
+  playing.value = loading.value = false
+  state.value = 'idle'
+  level.value = 0
+}
+uni.$on('tt:page-hide', cleanup)
+onHide(cleanup)
+onUnmounted(() => { uni.$off('tt:page-hide', cleanup); cleanup() })
+// #ifdef H5
+function visibility() { if (document.hidden) cleanup() }
+document.addEventListener('visibilitychange', visibility)
+onUnmounted(() => document.removeEventListener('visibilitychange', visibility))
+// #endif
+
 </script>
 
 <style lang="scss" scoped>

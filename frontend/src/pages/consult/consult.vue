@@ -99,6 +99,11 @@
       <view id="bottom" class="bottom-space" />
     </scroll-view>
 
+    <view v-if="generationError" class="generation-error">
+      <text>{{ generationError }}</text>
+      <text v-if="failedGeneration" class="link" @tap="retry">重试这次生成</text>
+      <text v-else class="link" @tap="sync">重新连接</text>
+    </view>
     <view v-if="c && c.status !== 'safety'" class="input-bar">
       <view v-if="c.plan" class="modes">
         <text class="mode" :class="{ on: kind === 'ask' }" @tap="kind = 'ask'">继续问</text>
@@ -106,7 +111,7 @@
         <text class="mode" :class="{ on: kind === 'roundtable' }" @tap="kind = 'roundtable'">圆桌辩论</text>
       </view>
       <view class="bar">
-        <VoiceInput @text="onVoice" />
+        <VoiceInput :disabled="busy" @text="onVoice" />
         <textarea v-model="draft" class="input" auto-height :maxlength="kind === 'roundtable' ? 100 : 2000" :placeholder="placeholder" :disabled="busy" />
         <view class="send" :class="{ off: busy || (kind !== 'roundtable' && draft.trim().length < 1) }" @tap="sendMsg">{{ kind === 'roundtable' ? '开会' : '发送' }}</view>
       </view>
@@ -149,8 +154,11 @@
 
 <script setup>
 import { ref, computed, nextTick } from 'vue'
-import { onLoad } from '@dcloudio/uni-app'
+import { onLoad, onShow, onHide, onUnload } from '@dcloudio/uni-app'
 import { api } from '../../utils/api'
+import { getCurrentUser } from '../../utils/request'
+import { syncNotifications } from '../../utils/notifications'
+import { createGeneration, pendingGeneration, saveGeneration } from '../../utils/generation'
 import VoiceInput from '../../components/VoiceInput/VoiceInput.vue'
 
 const c = ref(null)
@@ -163,6 +171,23 @@ const picked = ref({})
 const answers = ref({})
 const bottomId = ref('bottom')
 const showSwitch = ref(false)
+const generationError = ref('')
+const failedGeneration = ref(null)
+let timer = null
+let visible = false
+let initialized = false
+let syncing = false
+let consultId = 0
+let active = null
+
+function keyboardSend(e) {
+  if (!visible || !e.target || !e.target.closest('.input-bar textarea')) return
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+    e.preventDefault()
+    sendMsg()
+  }
+}
+
 const showSeats = ref(false)
 const myAdvisors = ref([])
 const seatPick = ref([])
@@ -185,37 +210,94 @@ async function scrollBottom() {
   bottomId.value = 'bottom'
 }
 
-async function apply(res) {
-  c.value = res
-  uni.setNavigationBarTitle({ title: res.title || '问计' })
-  await scrollBottom()
-  if (res.status === 'routed' && !res.plan) {
-    const last = res.messages[res.messages.length - 1]
-    const choose = last && last.kind === 'route' && last.data.candidates && last.data.candidates.length > 1
-    if (!choose) await plan()
-  }
-}
-
-async function run(text, fn) {
+async function run(text, kind, payload = {}) {
+  if (busy.value) return
+  generationError.value = ''
+  failedGeneration.value = null
+  active = createGeneration(kind, consultId || (c.value && c.value.id), payload)
   busy.value = true
   busyText.value = text
   await scrollBottom()
-  try {
-    await apply(await fn())
-  } catch (e) {
-    // 错误提示由 request 统一处理
-  } finally {
-    busy.value = false
-  }
+  await sync()
 }
 
 function plan(council) {
-  const name = council ? councilName(council) : (c.value.council && c.value.council.name) || '智囊团'
-  return run(`${name}正在商议，通常需要 20–40 秒…`, () => api.makePlan(c.value.id, council))
+  return run('智囊团正在生成锦囊，离开后可回来查看…', 'plan', { council: council || null })
 }
 
 function retry() {
-  if (c.value.plan || c.value.status === 'routed' || c.value.status === 'failed') return plan()
+  if (busy.value) return
+  const old = failedGeneration.value
+  if (old) return run('正在重新处理…', old.kind, old.payload)
+  return plan()
+}
+
+async function sync() {
+  if (syncing || !visible || !initialized) return
+  syncing = true
+  try {
+    active = active || pendingGeneration()
+    // 其他问计的本地任务不影响当前对话；在对应对话或首页恢复。
+    if (active && consultId && active.consult_id && Number(active.consult_id) !== consultId) active = null
+    let job = active ? await api.findGeneration(active.request_key) : (consultId ? await api.findGeneration('', consultId) : null)
+    if (!job && active) job = await api.submitGeneration(active)
+    if (job && job.consult_id) {
+      consultId = Number(job.consult_id)
+      if (active) { active.consult_id = consultId; saveGeneration(active) }
+      // #ifdef H5
+      const u = new URL(location.href)
+      u.hash = '/pages/consult/consult?id=' + consultId
+      history.replaceState(history.state, '', u)
+      // #endif
+    }
+    busy.value = !!job && ['queued', 'running'].includes(job.status)
+    busyText.value = job ? job.stage + '，离开后可回来查看…' : ''
+    generationError.value = ''
+    if (job && job.status === 'failed') {
+      failedGeneration.value = active || { kind: job.kind, payload: job.payload || {} }
+      generationError.value = job.error || '生成中断，请重试'
+    }
+    if (job && !busy.value) {
+      if (active && job.status === 'done') syncNotifications().catch(() => {})
+      if (active && pendingGeneration() && pendingGeneration().request_key === active.request_key) saveGeneration(null)
+      active = null
+    }
+    if (consultId) {
+      const result = await api.consult(consultId)
+      // 周期刷新保留草稿与当前阅读位置；仅新消息到达时滚动。
+      const oldLast = c.value && c.value.messages && c.value.messages.slice(-1)[0]
+      const last = result.messages.slice(-1)[0]
+      c.value = result
+      uni.setNavigationBarTitle({ title: result.title || '问计' })
+      if ((!oldLast || !last || oldLast.id !== last.id) && visible) await scrollBottom()
+      if (!busy.value && !generationError.value && result.status === 'routed' && !result.plan) {
+        const choose = last && last.data && last.data.candidates && last.data.candidates.length > 1
+        if (!choose) await plan()
+      }
+    }
+  } catch (e) {
+    // 请求确认丢失时保留原请求标识，恢复网络后只查询/重放同一次提交。
+    generationError.value = e.status === 401 ? '登录已过期，请重新登录后查看结果' : (e.status === 400 ? e.message : '连接暂时中断，正在恢复；无需重复提交')
+    if (e.status === 400) {
+      busy.value = false
+      if (active && !active.consult_id) failedGeneration.value = active
+      active = null
+      saveGeneration(null)
+    }
+  } finally {
+    syncing = false
+  }
+}
+
+function showPage() {
+  visible = true
+  if (!timer) timer = setInterval(sync, 3000)
+  sync()
+}
+function hidePage() {
+  visible = false
+  clearInterval(timer)
+  timer = null
 }
 
 function switchTo(code) {
@@ -237,17 +319,18 @@ function onVoice(t) {
 function roundtable(topic) {
   if (busy.value) return
   kind.value = 'ask'
-  return run('谋士们正在圆桌上争论，通常需要 20–40 秒…', () => api.roundtable(c.value.id, topic))
+  return run('谋士们正在圆桌上争论，通常需要 20–40 秒…', 'roundtable', { topic })
 }
 
 function adoptVerdict(m) {
   if (busy.value) return
   const v = m.data.verdict || {}
   const text = `请按圆桌会议的裁决调整锦囊：${v.text || ''}${v.adopt && v.adopt.length ? '（采纳：' + v.adopt.join('；') + '）' : ''}`
-  run('智囊在按裁决调整锦囊…', () => api.consultMessage(c.value.id, text.slice(0, 1900), 'ask'))
+  run('智囊在按裁决调整锦囊…', 'message', { text: text.slice(0, 1900), kind: 'ask' })
 }
 
 async function openSeats() {
+  if (busy.value) return
   showSeats.value = true
   seatPick.value = (c.value.extra_advisors || []).map((a) => a.code)
   try {
@@ -298,12 +381,12 @@ function sendMsg() {
   picked.value = {}
   answers.value = {}
   const tip = k === 'answer' ? '智囊在重新理解你的情况…' : k === 'review' ? '智囊在根据结果调整锦囊…' : '智囊在思考…'
-  run(tip, () => api.consultMessage(c.value.id, text, k))
+  run(tip, 'message', { text, kind: k })
   kind.value = 'ask'
 }
 
 function skip() {
-  run('智囊在分派…', () => api.consultMessage(c.value.id, '', 'skip'))
+  run('智囊在分派…', 'message', { text: '', kind: 'skip' })
 }
 
 function openPlan(version) {
@@ -323,29 +406,52 @@ async function rehearse() {
 
 onLoad(async (q) => {
   api.councils().then((r) => (councils.value = r)).catch(() => {})
+  consultId = Number(q.id) || 0
   if (q.review) kind.value = 'review'
-  if (q.id) {
-    busy.value = true
-    busyText.value = '加载中…'
-    try {
-      await apply(await api.consult(q.id))
-    } finally {
-      busy.value = false
+  if (!consultId) {
+    const stored = uni.getStorageSync('tt_pending_consult')
+    const pending = stored && stored.user_id === (getCurrentUser() || {}).uid ? stored : null
+    active = pendingGeneration()
+    if (pending && pending.text) {
+      if (active) {
+        uni.showToast({ title: '先恢复尚未完成的问计，请完成后再发起新的问计', icon: 'none' })
+      } else {
+        active = createGeneration('create', null, pending)
+      }
+      uni.removeStorageSync('tt_pending_consult')
     }
-    if (q.roundtable && c.value && c.value.plan) roundtable('')
-    return
+    if (active) {
+      consultId = Number(active.consult_id) || 0
+      c.value = { id: consultId, status: 'asking', messages: [], plan: null }
+      busy.value = true
+    } else return uni.navigateBack()
   }
-  const pending = uni.getStorageSync('tt_pending_consult')
-  uni.removeStorageSync('tt_pending_consult')
-  if (!pending || !pending.text) return uni.navigateBack()
-  c.value = { id: 0, title: '问计', status: 'asking', messages: [{ id: 'p', role: 'user', kind: 'ask', text: pending.text, data: {} }] }
-  await run('智囊在理解你的情况…', () => api.createConsult(pending.text, pending.council, pending.advisors))
-  if (!c.value || !c.value.id) uni.navigateBack()
+  initialized = true
+  visible = true
+  await sync()
+  showPage()
+  if (q.roundtable && c.value && c.value.plan && !busy.value) roundtable('')
 })
+onShow(showPage)
+onHide(hidePage)
+onUnload(hidePage)
+// #ifdef H5
+function updateViewport() {
+  document.documentElement.style.setProperty('--tt-visible-height', (window.visualViewport ? window.visualViewport.height : window.innerHeight) + 'px')
+}
+updateViewport()
+if (window.visualViewport) window.visualViewport.addEventListener('resize', updateViewport)
+function becameVisible() { if (document.hidden) hidePage(); else { updateViewport(); showPage() } }
+document.addEventListener('keydown', keyboardSend)
+window.addEventListener('online', sync)
+document.addEventListener('visibilitychange', becameVisible)
+onUnload(() => { document.removeEventListener('keydown', keyboardSend); if (window.visualViewport) window.visualViewport.removeEventListener('resize', updateViewport); window.removeEventListener('online', sync); document.removeEventListener('visibilitychange', becameVisible) })
+// #endif
+
 </script>
 
 <style lang="scss" scoped>
-.page { position: fixed; top: 0; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column; background: $tt-bg; }
+.page { position: fixed; top: var(--window-top, 0px); left: 0; right: 0; bottom: auto; height: calc(var(--tt-visible-height, 100dvh) - var(--window-top, 0px) - var(--window-bottom, 0px)); display: flex; flex-direction: column; background: $tt-bg; }
 .council-bar {
   display: flex; align-items: center; gap: 16rpx; padding: 18rpx 32rpx; background: #fff;
   border-bottom: 1rpx solid #EEF2F0; flex-shrink: 0;
@@ -435,4 +541,14 @@ onLoad(async (q) => {
 .sw-icon { width: 60rpx; height: 60rpx; line-height: 60rpx; text-align: center; border-radius: 50%; background: $tt-soft; color: $tt-primary; font-weight: 700; flex-shrink: 0; }
 .sw-body { flex: 1; display: flex; flex-direction: column; }
 .sw-name { font-size: 28rpx; font-weight: 600; }
+</style>
+
+<style lang="scss" scoped>
+.generation-error { padding: 18rpx 28rpx; background: #fff3df; color: #8c5b17; font-size: 26rpx; display: flex; gap: 20rpx; flex-wrap: wrap; }
+@media (min-width: 900px) {
+  .page { max-width: 1000px; margin: auto; border-left: 1px solid #dfe9e5; border-right: 1px solid #dfe9e5; }
+  .list { padding: 24px 40px 0; }
+  .bubble { max-width: 72%; }
+  .sheet { max-width: 680px; }
+}
 </style>

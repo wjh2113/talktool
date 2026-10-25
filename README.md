@@ -219,3 +219,17 @@ AI 讲话中（播放 TTS） → 可以说话（自动开麦） → 用户讲话
 | [`docs/场景库导入-发给大模型的提示词.md`](docs/场景库导入-发给大模型的提示词.md) | 交给其他大模型整理题库 |
 | [`docs/产品需求.md`](docs/产品需求.md) | 产品规格 |
 | [`docs/AIapiMgr接入指南.md`](docs/AIapiMgr接入指南.md) | 网关对接 |
+
+## 12. 后台生成与系统提醒
+
+智囊生成使用持久化后台任务，接口 `/api/advisor/jobs` 接收请求标识并立即返回任务；客户端轮询并恢复断线任务，同一问计串行执行。进程重启会恢复已保存结果或明确标记中断，不自动重新提交用户消息。浏览器通知通过标准 Web Push，每分钟检查到期事项；操作和原生 App 能力边界见[操作手册](docs/操作手册.md#断线恢复与系统提醒)。
+
+后端全量回归：在 `backend/` 下执行 `for test in tests/test_*.py; do .venv/bin/python "$test" || exit; done`。
+
+浏览器故障恢复回归（仅用于隔离的 Mock 环境，会创建测试问计）：
+
+1. 后端：在 `backend/` 执行 `DATA_DIR=/tmp/talktool-qa-data MOCK_MODE=true ADMIN_USERNAME=qa_admin ADMIN_PASSWORD=TalktoolQA2026 .venv/bin/python -m uvicorn app.main:app --port 18000`。
+2. 前端：在 `frontend/` 执行 `VITE_PROXY_TARGET=http://127.0.0.1:18000 VITE_API_BASE='' npm run dev:h5 -- --port 15173`。
+3. 在 `frontend/` 执行 `npx playwright install chromium`，再执行 `npm run test:recovery`。测试包含丢失提交响应、离线重连、刷新恢复、防重复生成、跨设备更新保留草稿、快捷键、离页释放麦克风及 Service Worker 通知显示。
+
+Web Push 私钥位于数据目录，部署和备份必须保留。App 本地通知与录音兼容代码需要重新打包安装，不能仅通过 H5 发布更新。

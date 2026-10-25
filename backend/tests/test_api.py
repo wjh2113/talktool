@@ -2,6 +2,7 @@
 import os
 import sys
 import tempfile
+import time
 
 os.environ.update(DATA_DIR=tempfile.mkdtemp(), GATEWAY_API_KEY="", MOCK_MODE="true",
                   ADMIN_USERNAME="qa_admin", ADMIN_PASSWORD="test-password")
@@ -26,7 +27,18 @@ def main():
             assert call("GET", path) is not None
         result = call("POST", "/api/consults", {"text": "王总总在会上否定我的方案，我想争取下季度项目负责人"})
         cid = result["id"]
-        result = call("POST", f"/api/consults/{cid}/plan", {})
+        queued = call("POST", "/api/advisor/jobs", {"request_key": "api-plan-request", "kind": "plan", "consult_id": cid}, expected=202)
+        replay = call("POST", "/api/advisor/jobs", {"request_key": "api-plan-request", "kind": "plan", "consult_id": cid}, expected=202)
+        assert queued["id"] == replay["id"]
+        for _ in range(100):
+            state = call("GET", "/api/advisor/jobs/" + queued["id"])
+            if state["status"] in ("done", "failed"):
+                break
+            time.sleep(0.05)
+        assert state["status"] == "done", state
+        assert call("GET", "/api/consults/" + str(cid))["plan"]["version"] == 1
+
+        result = call("GET", f"/api/consults/{cid}")
         assert result["status"] == "planned"
         assert result["plan"]["content"]["lines"]
         pid = result["plan"]["id"]
@@ -45,6 +57,8 @@ def main():
         code = invites[0]["code"] if isinstance(invites, list) else invites["items"][0]["code"]
         other = call("POST", "/api/auth/register", {"invite_code": code, "username": "other_user", "password": "test-password"})
         client.headers["Authorization"] = "Bearer " + other["token"]
+        call("GET", "/api/advisor/jobs/" + queued["id"], expected=404)
+        call("GET", "/api/advisor/jobs/find?consult_id=" + str(cid), expected=404)
         for method, path, data in (
             ("GET", f"/api/consults/{cid}", None),
             ("POST", f"/api/consults/{cid}/plan", {}),

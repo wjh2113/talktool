@@ -100,18 +100,25 @@ function downsampleToInt16(chunks, inRate, outRate = 16000) {
 
 export function createRecorder(cb = {}) {
   let stream = null, source = null, proc = null
-  let capturing = false, chunks = [], startAt = 0, resolver = null, vad = null
+  let capturing = false, chunks = [], startAt = 0, resolver = null, vad = null, revision = 0
 
   async function init() {
     if (stream) return
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       throw new Error('当前浏览器不支持录音（需 HTTPS 或 localhost）')
     }
-    stream = await navigator.mediaDevices.getUserMedia({
+    const generation = revision
+    const acquired = await navigator.mediaDevices.getUserMedia({
       audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true }
     })
+    if (generation !== revision) {
+      acquired.getTracks().forEach((t) => t.stop())
+      throw new Error('录音已取消')
+    }
+    stream = acquired
     const ctx = getCtx()
     if (ctx.state === 'suspended') await ctx.resume()
+    if (generation !== revision) { release(); throw new Error('录音已取消') }
     source = ctx.createMediaStreamSource(stream)
     proc = ctx.createScriptProcessor(4096, 1, 1)
     proc.onaudioprocess = (e) => {
@@ -126,6 +133,12 @@ export function createRecorder(cb = {}) {
     proc.connect(ctx.destination)
   }
 
+  function release() {
+    try { proc && proc.disconnect(); source && source.disconnect() } catch (e) {}
+    stream && stream.getTracks().forEach((t) => t.stop())
+    stream = source = proc = null
+  }
+
   function finish() {
     if (!capturing) return
     capturing = false
@@ -134,6 +147,7 @@ export function createRecorder(cb = {}) {
     chunks = []
     const r = resolver
     resolver = null
+    release()
     r && r({ data: pcm.buffer, format: 'pcm', sampleRate: 16000, durationMs: Date.now() - startAt, spoke: vad.started })
   }
 
@@ -148,15 +162,17 @@ export function createRecorder(cb = {}) {
       capturing = true
       return new Promise((resolve) => (resolver = resolve))
     },
-    stop() { finish() },
-    cancel() { capturing = false; chunks = []; resolver = null },
-    destroy() {
+    stop() { if (capturing) finish(); else this.cancel() },
+    cancel() {
+      revision++
       capturing = false
+      chunks = []
+      const r = resolver
       resolver = null
-      try { proc && proc.disconnect(); source && source.disconnect() } catch (e) {}
-      stream && stream.getTracks().forEach((t) => t.stop())
-      stream = source = proc = null
-    }
+      release()
+      r && r(null)
+    },
+    destroy() { this.cancel() }
   }
 }
 
@@ -214,6 +230,7 @@ let rmHandlers = null
 function getRm() {
   if (rm) return rm
   rm = uni.getRecorderManager()
+  // #ifndef APP-PLUS
   rm.onFrameRecorded(({ frameBuffer }) => {
     if (!rmHandlers || !frameBuffer) return
     const i16 = new Int16Array(frameBuffer)
@@ -222,6 +239,7 @@ function getRm() {
     for (let i = 0; i < i16.length; i++) { const v = i16[i] / 32768; sum += v * v }
     rmHandlers.frame(Math.sqrt(sum / i16.length), (i16.length / 16000) * 1000)
   })
+  // #endif
   rm.onStop((res) => { rmHandlers && rmHandlers.stop(res) })
   rm.onError((err) => { rmHandlers && rmHandlers.error(err) })
   return rm
@@ -251,7 +269,7 @@ function ensureRecordAuth() {
 }
 
 export function createRecorder(cb = {}) {
-  let vad = null, resolver = null, active = false, cancelled = false, authed = false
+  let vad = null, resolver = null, active = false, cancelled = false, authed = false, startAt = 0
   const manager = getRm()
 
   return {
@@ -261,6 +279,7 @@ export function createRecorder(cb = {}) {
     async start() {
       await this.init()
       cancelled = false
+      startAt = Date.now()
       vad = new Vad({ ...cb, onSpeechEnd: () => active && manager.stop() })
       return new Promise((resolve, reject) => {
         resolver = resolve
@@ -271,13 +290,17 @@ export function createRecorder(cb = {}) {
             const r = resolver
             resolver = null
             if (cancelled || !r) return
-            r({ filePath: res.tempFilePath, format: 'pcm', sampleRate: 16000, durationMs: res.duration, spoke: vad.started })
+            let spoke = vad.started
+            // #ifdef APP-PLUS
+            spoke = Date.now() - startAt >= 300
+            // #endif
+            r({ filePath: res.tempFilePath, format: 'pcm', sampleRate: 16000, durationMs: res.duration || Date.now() - startAt, spoke })
           },
           error: (err) => { active = false; resolver = null; reject(new Error(err.errMsg || '录音失败')) }
         }
         active = true
         manager.start({
-          duration: 600000,
+          duration: (cb.vad && cb.vad.maxMs) || VAD_CONFIG.maxMs,
           sampleRate: 16000,
           numberOfChannels: 1,
           encodeBitRate: 48000,
@@ -287,8 +310,15 @@ export function createRecorder(cb = {}) {
       })
     },
     stop() { if (active) manager.stop() },
-    cancel() { cancelled = true; if (active) manager.stop() },
-    destroy() { cancelled = true; if (active) manager.stop(); rmHandlers = null }
+    cancel() {
+      cancelled = true
+      const r = resolver
+      resolver = null
+      if (active) manager.stop()
+      active = false
+      r && r(null)
+    },
+    destroy() { this.cancel(); rmHandlers = null }
   }
 }
 

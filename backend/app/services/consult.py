@@ -225,7 +225,7 @@ async def resolve_text(text: str, audio: bytes = None, fmt: str = "wav", sample_
     return text
 
 
-async def create(user_id: str, text: str, council_code: str = None, advisors: list = None) -> dict:
+async def create(user_id: str, text: str, council_code: str = None, advisors: list = None, job_id: str = None) -> dict:
     """新问计：识别意图 → 路由。用户直接点了某个智囊团时跳过识别里的选团环节；advisors = 请来列席的私人谋士。"""
     quota.hit(user_id, "consult", config.DAILY_CONSULT_LIMIT, "今天的提问次数已用完，明天再来吧")
     extra = workflow.valid_extra(user_id, advisors)
@@ -233,6 +233,8 @@ async def create(user_id: str, text: str, council_code: str = None, advisors: li
         cid = conn.execute("""INSERT INTO consult(user_id, title, council_code, extra_advisors, created_at, updated_at)
                               VALUES (?,?,?,?,?,?)""",
                            (user_id, text[:16], council_code or "", dumps(extra), now_str(), now_str())).lastrowid
+        if job_id:
+            conn.execute("UPDATE generation_job SET consult_id=? WHERE id=? AND user_id=?", (cid, job_id, user_id))
         _add_msg(conn, cid, "user", "ask", text)
     await _route(user_id, cid, text, history="", clarified=False, forced=council_code)
     return get_detail(user_id, cid)
@@ -440,6 +442,8 @@ def delete_consult(user_id: str, consult_id: int) -> dict:
     """删除问计，同时删除由它产生的记忆条目；生成过的对练场景保留在“我的场景”。"""
     with get_conn() as conn:
         _get(conn, user_id, consult_id)
+        if conn.execute("SELECT 1 FROM generation_job WHERE consult_id=? AND status IN ('queued','running')", (consult_id,)).fetchone():
+            raise BadRequest("生成进行中，请完成后再删除")
         memory.delete_by_consult(conn, user_id, consult_id)
         conn.execute("UPDATE drill SET consult_id = NULL WHERE consult_id = ?", (consult_id,))
         conn.execute("DELETE FROM consult WHERE id = ?", (consult_id,))

@@ -123,6 +123,9 @@
 import { ref, computed } from 'vue'
 import { onShow, onPullDownRefresh } from '@dcloudio/uni-app'
 import { api } from '../../utils/api'
+import { getCurrentUser } from '../../utils/request'
+import { pendingGeneration } from '../../utils/generation'
+import { syncNotifications } from '../../utils/notifications'
 import VoiceInput from '../../components/VoiceInput/VoiceInput.vue'
 
 const text = ref('')
@@ -147,6 +150,7 @@ async function load() {
   myAdvisors.value = r.my_advisors || []
   seats.value = seats.value.filter((c) => myAdvisors.value.some((a) => a.code === c))
   setBadge(due.value.length)
+  syncNotifications().catch(() => {})
 }
 
 function setBadge(n) {
@@ -182,9 +186,15 @@ function onVoice(t) {
 }
 
 function send(council) {
+  const existing = pendingGeneration()
+  if (existing) {
+    uni.showToast({ title: '正在恢复上次生成，你输入的新内容已保留', icon: 'none' })
+    uni.navigateTo({ url: '/pages/consult/consult' + (existing.consult_id ? '?id=' + existing.consult_id : '') })
+    return
+  }
   const t = (council ? pickText.value : text.value).trim()
   if (t.length < 2) return
-  uni.setStorageSync('tt_pending_consult', { text: t, council: council || '', advisors: [...seats.value] })
+  uni.setStorageSync('tt_pending_consult', { text: t, council: council || '', advisors: [...seats.value], user_id: (getCurrentUser() || {}).uid })
   text.value = ''
   pickText.value = ''
   pick.value = null

@@ -69,6 +69,11 @@
       </view>
     </view>
 
+    <view class="card menu notification-card">
+      <view class="sec-title">到期提醒</view>
+      <text class="sec-sub">{{ notifyHint }}</text>
+      <view class="btn-plain" @tap="toggleNotifications">{{ notifyBusy ? '正在设置…' : notifyEnabled ? '关闭此设备的系统提醒' : '开启此设备的系统提醒' }}</view>
+    </view>
     <view class="btn-plain logout" @tap="logout">退出登录</view>
     <text class="foot muted">训练结果仅反映单次练习表现，仅供参考</text>
   </view>
@@ -77,11 +82,27 @@
 <script setup>
 import { ref, reactive } from 'vue'
 import { onShow, onHide } from '@dcloudio/uni-app'
+import { notificationHint, notificationEnabled, enableNotifications, disableNotifications } from '../../utils/notifications'
 import { api } from '../../utils/api'
 import { absUrl, clearLogin, getCurrentUser } from '../../utils/request'
 import { clearDemoTtsCache } from '../../utils/demoTts'
 import { getTtsGender, syncTtsGender } from '../../utils/ttsGender'
 import { playAudio, stopAudio, unlockAudio } from '../../utils/voice'
+
+const notifyEnabled = ref(false)
+const notifyBusy = ref(false)
+const notifyHint = notificationHint()
+async function toggleNotifications() {
+  if (notifyBusy.value) return
+  notifyBusy.value = true
+  try {
+    if (notifyEnabled.value) await disableNotifications()
+    else await enableNotifications()
+    notifyEnabled.value = await notificationEnabled()
+    uni.showToast({ title: notifyEnabled.value ? '已开启系统提醒' : '已关闭系统提醒', icon: 'none' })
+  } catch (e) { uni.showModal({ title: '提醒设置', content: e.message || '设置失败，请稍后重试', showCancel: false }) }
+  finally { notifyBusy.value = false }
+}
 
 const user = ref(getCurrentUser() || {})
 const healthText = ref('检测中…')
@@ -175,6 +196,7 @@ function logout() {
     success: async (r) => {
       if (!r.confirm) return
       stopPreview()
+      await disableNotifications().catch(() => {})
       await api.logout().catch(() => {})
       clearLogin()
       uni.reLaunch({ url: '/pages/login/login' })
@@ -183,6 +205,7 @@ function logout() {
 }
 
 onShow(async () => {
+  notificationEnabled().then((v) => { notifyEnabled.value = v }).catch(() => {})
   api.me().then((u) => {
     if (u) {
       user.value = u
@@ -236,4 +259,9 @@ onHide(stopPreview)
 }
 .logout { margin-top: 12rpx; color: #E5484D; }
 .foot { display: block; text-align: center; margin-top: 40rpx; }
+</style>
+
+<style scoped>
+.notification-card { padding: 24px; margin-bottom: 16px; }
+.notification-card .btn-plain { margin-top: 16px; }
 </style>
