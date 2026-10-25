@@ -121,6 +121,70 @@ async def chat(messages: list, capability: str = None, temperature: float = None
         raise GatewayError(f"对话返回格式异常: {json.dumps(data, ensure_ascii=False)[:300]}") from e
 
 
+async def stream_chat(messages: list, capability: str = None, temperature: float = None,
+                      max_tokens: int = 400, user_id: str = None, idempotency_key: str = None,
+                      max_cost: float = None, thinking: bool = None):
+    """读真实 SSE 正文；发出正文后遇到中断不自动重放，避免拼接两次回答。"""
+    payload = {**_common(), "capability": capability or config.LLM_CAPABILITY, "messages": messages,
+               "stream": True, "temperature": config.LLM_TEMPERATURE if temperature is None else temperature,
+               "max_tokens": max_tokens}
+    if thinking is not None:
+        payload.update(thinking={"type": "enabled" if thinking else "disabled"}, enable_thinking=thinking)
+    if user_id: payload["userId"] = user_id
+    if idempotency_key: payload["idempotencyKey"] = idempotency_key
+    if max_cost: payload["maxCostCny"] = max_cost
+    emitted = False
+    try:
+        async with _client() as client:
+            async with client.stream("POST", f"{config.GATEWAY_BASE_URL}/api/ai/chat", json=payload,
+                                     headers={**_headers(), "Accept": "text/event-stream"}) as response:
+                if response.status_code >= 400:
+                    await response.aread()
+                    _check(response, "流式对话")
+                if "application/json" in response.headers.get("Content-Type", ""):
+                    await response.aread()
+                    data = response.json()
+                    if data.get("error"):
+                        raise GatewayError("网关未能完成生成")
+                    text = (data.get("choices") or [{}])[0].get("message", {}).get("content")
+                    if not isinstance(text, str) or not text:
+                        raise GatewayError("流式对话返回格式异常")
+                    yield text
+                    return
+                frame = []
+                done = False
+                async for line in response.aiter_lines():
+                    if line.startswith("data:"):
+                        frame.append(line[5:].lstrip())
+                        continue
+                    if line or not frame:
+                        continue
+                    raw = "\n".join(frame)
+                    frame = []
+                    if raw.strip() == "[DONE]":
+                        done = True
+                        break
+                    try:
+                        data = json.loads(raw)
+                    except ValueError as exc:
+                        raise GatewayError("网关返回无效的流式数据") from exc
+                    if data.get("error"):
+                        raise GatewayError("网关流式生成中断，请重试")
+                    for choice in data.get("choices") or []:
+                        text = (choice.get("delta") or {}).get("content")
+                        if isinstance(text, str) and text:
+                            emitted = True
+                            yield text
+                if not done:
+                    raise GatewayError("生成连接提前结束，已接收的草稿已保留")
+                if not emitted:
+                    raise GatewayError("模型没有返回正文，请重试")
+    except GatewayError:
+        raise
+    except Exception as exc:
+        raise GatewayError("生成连接中断，已接收的草稿已保留" if emitted else "暂时无法连接生成服务，请重试") from exc
+
+
 async def transcribe(audio: bytes, filename: str = "audio.wav", mime: str = "audio/wav",
                      idempotency_key: str = None) -> str:
     data = {**{k: str(v).lower() if isinstance(v, bool) else v for k, v in _common().items()},

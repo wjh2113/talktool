@@ -4,7 +4,7 @@ import logging
 import secrets
 
 from ..db import dumps, get_conn, loads, now_str
-from . import consult
+from . import consult, generation_stream
 from .sessions import BadRequest, NotFound
 
 log = logging.getLogger("talktool.jobs")
@@ -113,7 +113,10 @@ async def execute(job_id):
         c.execute("UPDATE generation_job SET status='running', stage=?, updated_at=? WHERE id=? AND status='queued'",
                   (STAGES[row["kind"]], now_str(), job_id))
     p, uid, cid = loads(row["payload"], {}), row["user_id"], row["consult_id"]
+    capture = None
     try:
+        capture = generation_stream.Capture(job_id)
+        capture.__enter__()
         if row["kind"] == "create":
             result = await consult.create(uid, p["text"], p.get("council"), p.get("advisors"), job_id=job_id)
         elif row["kind"] == "plan":
@@ -137,6 +140,24 @@ async def execute(job_id):
         with get_conn() as c:
             c.execute("UPDATE generation_job SET status='failed',stage='生成失败',error=?,updated_at=? WHERE id=?",
                       (message[:300], now_str(), job_id))
+
+    finally:
+        if capture is not None:
+            capture.__exit__()
+
+
+def events(user_id, job_id, after=0, limit=100):
+    with get_conn() as c:
+        row = c.execute("SELECT * FROM generation_job WHERE id=? AND user_id=?", (job_id, user_id)).fetchone()
+        if not row:
+            raise NotFound("生成任务不存在")
+        rows = c.execute("SELECT id,node,attempt,kind,blocks FROM generation_event WHERE job_id=? AND id>? ORDER BY id LIMIT ?",
+                         (job_id, after, min(max(limit, 1), 100))).fetchall()
+        items = [{**dict(r), "blocks": loads(r["blocks"], [])} for r in rows]
+        cursor = items[-1]["id"] if items else after
+        more = c.execute("SELECT 1 FROM generation_event WHERE job_id=? AND id>? LIMIT 1", (job_id, cursor)).fetchone() is not None
+        return {"events": items, "cursor": cursor, "status": row["status"],
+                "terminal": row["status"] in ("done", "failed") and not more}
 
 
 async def loop():

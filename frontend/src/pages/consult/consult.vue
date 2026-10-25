@@ -89,6 +89,17 @@
           <view v-else class="bubble adv"><text>{{ m.text }}</text></view>
         </view>
 
+        <view v-if="streamBlocks.length" class="live-preview">
+          <view class="live-heading">
+            <text>{{ busy ? (streamAttempt ? '正在重新整理草稿' : '正在生成') : '未完成的草稿' }}</text>
+            <text class="muted">{{ streamHint || (busy ? '内容持续更新，完成后显示正式结果' : '草稿已保留，请重试生成') }}</text>
+          </view>
+          <view v-for="block in streamBlocks" :key="block.id" class="live-block">
+            <text class="live-label">{{ block.label }}</text>
+            <text class="live-text">{{ block.text }}</text>
+          </view>
+        </view>
+
         <view v-if="busy" id="busy" class="msg advisor">
           <view class="thinking">
             <view class="dots"><view class="dot" /><view class="dot" /><view class="dot" /></view>
@@ -156,6 +167,7 @@
 import { ref, computed, nextTick } from 'vue'
 import { onLoad, onShow, onHide, onUnload } from '@dcloudio/uni-app'
 import { api } from '../../utils/api'
+import { followGeneration } from '../../utils/generationStream'
 import { getCurrentUser } from '../../utils/request'
 import { syncNotifications } from '../../utils/notifications'
 import { createGeneration, pendingGeneration, saveGeneration } from '../../utils/generation'
@@ -177,8 +189,52 @@ let timer = null
 let visible = false
 let initialized = false
 let syncing = false
+let resyncRequested = false
 let consultId = 0
 let active = null
+const streamBlocks = ref([])
+const streamHint = ref('')
+const streamAttempt = ref(0)
+let streamJobId = ''
+let streamCursor = 0
+let stopStream = null
+let streamTerminal = false
+
+function closeStream() {
+  if (stopStream) stopStream()
+  stopStream = null
+}
+
+function watchStream(job) {
+  if (streamJobId !== job.id) {
+    closeStream()
+    streamJobId = job.id
+    streamCursor = 0
+    streamBlocks.value = []
+    streamAttempt.value = 0
+    streamHint.value = ''
+    streamTerminal = false
+  }
+  if (stopStream || streamTerminal || !visible) return
+  stopStream = followGeneration(job.id, {
+    onUpdate(event, cursor) {
+      if (!visible || streamJobId !== job.id) return
+      const first = !streamBlocks.value.length
+      streamCursor = cursor
+      streamAttempt.value = event.attempt
+      streamBlocks.value = event.blocks || []
+      streamHint.value = ''
+      if (first && streamBlocks.value.length) scrollBottom()
+    },
+    onTerminal() {
+      streamTerminal = true
+      stopStream = null
+      sync()
+    },
+    onError() { streamHint.value = '进度连接暂时中断，正在续读；后台生成仍会继续' }
+  }, streamCursor)
+}
+
 
 function keyboardSend(e) {
   if (!visible || !e.target || !e.target.closest('.input-bar textarea')) return
@@ -213,6 +269,8 @@ async function scrollBottom() {
 async function run(text, kind, payload = {}) {
   if (busy.value) return
   generationError.value = ''
+  closeStream()
+  streamBlocks.value = []
   failedGeneration.value = null
   active = createGeneration(kind, consultId || (c.value && c.value.id), payload)
   busy.value = true
@@ -233,7 +291,8 @@ function retry() {
 }
 
 async function sync() {
-  if (syncing || !visible || !initialized) return
+  if (!visible || !initialized) return
+  if (syncing) { resyncRequested = true; return }
   syncing = true
   try {
     active = active || pendingGeneration()
@@ -251,6 +310,7 @@ async function sync() {
       // #endif
     }
     busy.value = !!job && ['queued', 'running'].includes(job.status)
+    if (job && job.status !== 'done') watchStream(job)
     busyText.value = job ? job.stage + '，离开后可回来查看…' : ''
     generationError.value = ''
     if (job && job.status === 'failed') {
@@ -268,6 +328,7 @@ async function sync() {
       const oldLast = c.value && c.value.messages && c.value.messages.slice(-1)[0]
       const last = result.messages.slice(-1)[0]
       c.value = result
+      if (job && job.status === 'done') { closeStream(); streamBlocks.value = []; streamHint.value = '' }
       uni.setNavigationBarTitle({ title: result.title || '问计' })
       if ((!oldLast || !last || oldLast.id !== last.id) && visible) await scrollBottom()
       if (!busy.value && !generationError.value && result.status === 'routed' && !result.plan) {
@@ -286,6 +347,7 @@ async function sync() {
     }
   } finally {
     syncing = false
+    if (resyncRequested) { resyncRequested = false; if (visible) setTimeout(sync, 0) }
   }
 }
 
@@ -296,6 +358,7 @@ function showPage() {
 }
 function hidePage() {
   visible = false
+  closeStream()
   clearInterval(timer)
   timer = null
 }
@@ -551,4 +614,12 @@ onUnload(() => { document.removeEventListener('keydown', keyboardSend); if (wind
   .bubble { max-width: 72%; }
   .sheet { max-width: 680px; }
 }
+</style>
+
+<style lang="scss" scoped>
+.live-preview { background: #fff; border-left: 6rpx solid $tt-primary; padding: 24rpx; margin: 12rpx 0 24rpx; border-radius: 12rpx; }
+.live-heading { display: flex; flex-direction: column; gap: 8rpx; margin-bottom: 20rpx; color: $tt-primary; font-size: 26rpx; }
+.live-block { margin-bottom: 20rpx; display: flex; flex-direction: column; gap: 6rpx; }
+.live-label { color: $tt-text-3; font-size: 23rpx; }
+.live-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 28rpx; line-height: 1.8; color: $tt-text; }
 </style>

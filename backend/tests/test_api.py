@@ -36,6 +36,16 @@ def main():
                 break
             time.sleep(0.05)
         assert state["status"] == "done", state
+        events_url = "/api/advisor/jobs/" + queued["id"] + "/events"
+        batch = call("GET", events_url)
+        assert batch["events"] and batch["terminal"]
+        assert all("delta" not in e for e in batch["events"])
+        assert call("GET", events_url + "?after=" + str(batch["cursor"]))["events"] == []
+        call("GET", events_url + "?after=-1", expected=422)
+        stream = client.get("/api/advisor/jobs/" + queued["id"] + "/stream")
+        assert stream.status_code == 200 and stream.headers["content-type"].startswith("text/event-stream")
+        assert "event: terminal" in stream.text and "event: update" in stream.text
+
         assert call("GET", "/api/consults/" + str(cid))["plan"]["version"] == 1
 
         result = call("GET", f"/api/consults/{cid}")
@@ -58,6 +68,8 @@ def main():
         other = call("POST", "/api/auth/register", {"invite_code": code, "username": "other_user", "password": "test-password"})
         client.headers["Authorization"] = "Bearer " + other["token"]
         call("GET", "/api/advisor/jobs/" + queued["id"], expected=404)
+        call("GET", events_url, expected=404)
+        assert client.get("/api/advisor/jobs/" + queued["id"] + "/stream").status_code == 404
         call("GET", "/api/advisor/jobs/find?consult_id=" + str(cid), expected=404)
         for method, path, data in (
             ("GET", f"/api/consults/{cid}", None),

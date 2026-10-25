@@ -357,3 +357,16 @@ CREATE TABLE IF NOT EXISTS push_delivery (
     delivered_at TEXT NOT NULL,
     PRIMARY KEY(subscription_id, reminder_key)
 );
+
+-- 正文增量与可读投影同时持久化；id 为断线续读游标。
+CREATE TABLE IF NOT EXISTS generation_event (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id TEXT NOT NULL REFERENCES generation_job(id) ON DELETE CASCADE,
+    node TEXT NOT NULL,
+    attempt INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    delta TEXT NOT NULL DEFAULT '',
+    blocks TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_generation_event_job ON generation_event(job_id,id);

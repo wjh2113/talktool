@@ -10,7 +10,8 @@
     "dev:mp-weixin": "uni -p mp-weixin",
     "build:mp-weixin": "uni build -p mp-weixin",
     "uvm": "npx @dcloudio/uvm@latest",
-    "test:recovery": "node tests/recovery.cjs"
+    "test:recovery": "node tests/recovery.cjs",
+    "test:streaming": "node tests/streaming.cjs"
   },
   "dependencies": {
     "@dcloudio/uni-app": "vue3",

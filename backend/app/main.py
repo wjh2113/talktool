@@ -1,11 +1,13 @@
 """FastAPI 入口。启动：uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"""
 import asyncio
 import logging
+import json
+import time
 from typing import Optional
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -108,6 +110,42 @@ def advisor_find_job(request_key: Optional[str] = None, consult_id: Optional[int
 @app.get("/api/advisor/jobs/{job_id}")
 def advisor_job(job_id: str, user: dict = Depends(current_user)):
     return jobs.get(user["uid"], job_id)
+
+
+@app.get("/api/advisor/jobs/{job_id}/events")
+async def advisor_job_events(job_id: str, after: int = Query(0, ge=0), wait: int = Query(0, ge=0, le=15000),
+                             user: dict = Depends(current_user)):
+    deadline = time.monotonic() + wait / 1000
+    while True:
+        batch = jobs.events(user["uid"], job_id, after)
+        if batch["events"] or batch["terminal"] or time.monotonic() >= deadline:
+            return batch
+        await asyncio.sleep(0.1)
+
+
+@app.get("/api/advisor/jobs/{job_id}/stream")
+async def advisor_job_stream(job_id: str, request: Request, after: int = Query(0, ge=0),
+                              user: dict = Depends(current_user)):
+    jobs.get(user["uid"], job_id)  # 发响应头前校验归属，不把令牌放进 URL。
+
+    async def output():
+        cursor = after
+        heartbeat = time.monotonic()
+        while not await request.is_disconnected():
+            batch = jobs.events(user["uid"], job_id, cursor)
+            for event in batch["events"]:
+                cursor = event["id"]
+                yield f"id: {cursor}\nevent: update\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
+            if batch["terminal"]:
+                yield f"event: terminal\ndata: {json.dumps({'cursor': cursor, 'status': batch['status']})}\n\n"
+                return
+            if time.monotonic() - heartbeat >= 10:
+                yield ": keepalive\n\n"
+                heartbeat = time.monotonic()
+            await asyncio.sleep(0.1)
+
+    return StreamingResponse(output(), media_type="text/event-stream", headers={
+        "Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"})
 
 
 class SubscriptionIn(BaseModel):

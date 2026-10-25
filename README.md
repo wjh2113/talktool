@@ -233,3 +233,11 @@ AI 讲话中（播放 TTS） → 可以说话（自动开麦） → 用户讲话
 3. 在 `frontend/` 执行 `npx playwright install chromium`，再执行 `npm run test:recovery`。测试包含丢失提交响应、离线重连、刷新恢复、防重复生成、跨设备更新保留草稿、快捷键、离页释放麦克风及 Service Worker 通知显示。
 
 Web Push 私钥位于数据目录，部署和备份必须保留。App 本地通知与录音兼容代码需要重新打包安装，不能仅通过 H5 发布更新。
+
+### 可恢复的流式正文
+
+生成任务使用网关真实 SSE 正文增量，按任务、节点和重试代次写入 `generation_event`。H5 通过带 Authorization 请求头的 `/api/advisor/jobs/{id}/stream?after=游标` 续读；不支持流读取的端通过 `/events?after=游标&wait=10000` 长轮询读取相同事件。客户端只消费大于当前游标的事件，刷新时可从头恢复已保存投影，不重新执行模型调用。
+
+界面逐步显示锦囊字段、追问回复与圆桌发言，不显示原始 JSON 或推理内容。完整结果通过 JSON 和业务校验后才生成正式锦囊；重试前发送 reset 替换旧草稿，上游中断则保留未完成草稿并明确报错。服务重启恢复规则继续沿用后台任务逻辑。
+
+流式浏览器回归：隔离 Mock 服务额外设置 `MOCK_STREAM_DELAY=0.08`，在 `frontend/` 运行 `npm run test:streaming`；测试真实流连接中断、游标续读、刷新去重、追问、圆桌及长轮询回退。生产环境不使用 Mock 延迟。

@@ -1,0 +1,90 @@
+/* 对隔离的 Mock 服务运行，建议 MOCK_STREAM_DELAY=0.08 以观察生成中的断线。 */
+const { chromium } = require('playwright')
+const assert = require('node:assert/strict')
+;(async () => {
+  const browser = await chromium.launch({ channel: 'chromium' })
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } })
+  const page = await context.newPage()
+  await page.addInitScript(() => {
+    const original = window.fetch.bind(window)
+    window.fetch = (input, options = {}) => {
+      if (String(input).includes('/stream?after=')) {
+        const controller = new AbortController()
+        if (options.signal) options.signal.addEventListener('abort', () => controller.abort())
+        window.__testStreamConnection = controller
+        return original(input, { ...options, signal: controller.signal })
+      }
+      return original(input, options)
+    }
+  })
+  const errors = []
+  const afters = []
+  page.on('pageerror', error => errors.push(error.message))
+  page.on('request', req => {
+    if (/\/stream\?after=/.test(req.url())) afters.push(Number(new URL(req.url()).searchParams.get('after')))
+  })
+  const base = process.env.TALKTOOL_QA_BASE || 'http://127.0.0.1:15173'
+  const apiBase = process.env.TALKTOOL_QA_API || 'http://127.0.0.1:18000'
+  await page.goto(base + '/#/pages/login/login')
+  await page.locator('input').nth(0).fill(process.env.TALKTOOL_QA_USER || 'qa_admin')
+  await page.locator('input').nth(1).fill(process.env.TALKTOOL_QA_PASSWORD || 'TalktoolQA2026')
+  await page.locator('.submit').click()
+  await page.getByText('沟通表达演练场', { exact: true }).waitFor()
+  await page.getByText('智囊', { exact: true }).last().click()
+  await page.locator('textarea').fill('王总总在会上否定我的方案，我想争取下季度项目负责人')
+  await page.getByText('问智囊', { exact: true }).click()
+  await page.locator('.live-text').first().waitFor({ timeout: 20000 })
+  const token = await page.evaluate(() => uni.getStorageSync('tt_token'))
+  const headers = { Authorization: 'Bearer ' + token }
+  const cid = Number(new URL(page.url()).hash.match(/id=(\d+)/)[1])
+  const get = async path => {
+    const response = await context.request.get(apiBase + path, { headers })
+    assert.ok(response.ok(), await response.text())
+    return response.json()
+  }
+  let job = await get('/api/advisor/jobs/find?consult_id=' + cid)
+  assert.equal(job.status, 'running')
+  const first = await page.locator('.live-preview').innerText()
+  assert.ok(!first.includes('"headline"') && !first.includes('reasoning_content'))
+  assert.equal(await page.locator('.plan-card').count(), 0)
+  console.log('PASS visible partial text before formal plan exists')
+  await page.evaluate(() => window.__testStreamConnection.abort())
+  await context.setOffline(true)
+  await page.waitForTimeout(250)
+  await context.setOffline(false)
+  await page.waitForTimeout(1300)
+  assert.ok(afters.some(after => after > 0), JSON.stringify(afters))
+  console.log('PASS SSE reconnect resumes after persisted cursor')
+  await page.reload()
+  await page.getByText('锦囊 v1', { exact: true }).waitFor({ timeout: 20000 })
+  assert.equal(await page.locator('.live-preview').count(), 0)
+  const detail = await get('/api/consults/' + cid)
+  assert.equal(detail.plan.version, 1)
+  assert.equal(detail.messages.filter(m => m.kind === 'plan').length, 1)
+  console.log('PASS refresh restores result with one plan and no leftover draft')
+  await page.locator('textarea').fill('如果他当场拒绝我，帮我改一下')
+  await page.locator('.send').click()
+  await page.locator('.live-text').first().waitFor({ timeout: 10000 })
+  assert.ok((await page.locator('.live-preview').innerText()).includes('智囊回复'))
+  await page.getByText('锦囊 v2', { exact: true }).waitFor({ timeout: 20000 })
+  console.log('PASS followup reply and revised plan stream')
+  await page.getByText('开圆桌 ›', { exact: true }).last().click()
+  await page.locator('.live-text').first().waitFor({ timeout: 10000 })
+  await page.locator('.rt-card').waitFor({ timeout: 20000 })
+  assert.equal(await page.locator('.live-preview').count(), 0)
+  console.log('PASS roundtable streams before final speeches')
+  // SSE 不可用时，关闭 ReadableStream 模拟兼容端，仍能增量读取与完成。
+  const fallback = await context.newPage()
+  await fallback.addInitScript(() => { window.ReadableStream = undefined })
+  await fallback.goto(base + '/#/pages/consult/consult?id=' + cid)
+  await fallback.locator('textarea').fill('如果情况继续变化，再帮我改一下')
+  await fallback.locator('.send').click()
+  await fallback.locator('.live-text').first().waitFor({ timeout: 10000 })
+  await fallback.getByText('锦囊 v3', { exact: true }).waitFor({ timeout: 20000 })
+  console.log('PASS cursor long-poll fallback streams structured fields')
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await page.screenshot({ path: '/tmp/talktool-stream-desktop.png' })
+  assert.deepEqual(errors, [])
+  console.log('ALL STREAMING BROWSER TESTS PASSED')
+  await browser.close()
+})().catch(error => { console.error(error); process.exit(1) })

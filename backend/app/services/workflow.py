@@ -8,7 +8,7 @@ import re
 
 from .. import config
 from ..db import get_conn, loads, row_to_dict
-from . import gateway, prompt_store
+from . import gateway, prompt_store, generation_stream
 from . import strategies as st
 
 log = logging.getLogger("talktool.workflow")
@@ -90,9 +90,22 @@ async def _call(key: str, variables: dict, user_id: str, idem: tuple):
     messages, meta = prompt_store.render(key, variables)
     budget = meta["max_tokens"]
     for attempt in range(2):
-        text = await gateway.chat(messages, capability=meta["capability"], temperature=meta["temperature"],
-                                  max_tokens=budget, user_id=user_id, max_cost=config.MAX_COST_CONSULT, thinking=False,
-                                  idempotency_key=gateway.idem_key(key, meta["version"], budget, "direct", *idem))
+        kwargs = dict(capability=meta["capability"], temperature=meta["temperature"], max_tokens=budget,
+                      user_id=user_id, max_cost=config.MAX_COST_CONSULT, thinking=False,
+                      idempotency_key=gateway.idem_key(key, meta["version"], budget, "stream-v1" if generation_stream.capture_for(key) else "direct", *idem))
+        sink = generation_stream.capture_for(key)
+        if sink:
+            sink.begin(key, attempt)
+            chunks = []
+            try:
+                async for delta in gateway.stream_chat(messages, **kwargs):
+                    chunks.append(delta)
+                    sink.feed(delta)
+            finally:
+                sink.feed('', force=True)
+            text = ''.join(chunks)
+        else:
+            text = await gateway.chat(messages, **kwargs)
         if meta["output"] != "json":
             return text.strip(), meta
         try:
@@ -190,6 +203,8 @@ async def run_clarify(user_id: str, message: str, intent: dict, memory_text: str
     else:
         raw, _ = await _call("clarify", {"message": message, "missing": "、".join(intent["missing"]) or "关键细节",
                                          "memory": memory_text}, user_id, (consult_id, message))
+    if config.MOCK:
+        await generation_stream.mock("clarify", raw)
     qs = []
     for q in (raw.get("questions") or [])[:3]:
         if isinstance(q, dict) and q.get("q"):
@@ -301,6 +316,8 @@ async def run_council(user_id: str, council_code: str, situation: str, memory_te
         variables = {"council_name": council["name"], "advisors": advisors_text(council, extra), "situation": situation,
                      "memory": memory_text, "strategies": st.catalog_text(catalog), "frameworks": st.frameworks_text(fws)}
         raw, meta = await _call(key, variables, user_id, (consult_id, situation, *seats))
+    if config.MOCK:
+        await generation_stream.mock(key, raw)
     plan = normalize_plan(raw, {s["code"] for s in catalog}, {f["code"] for f in fws}, seats)
     return plan, {"prompt_versions": {key: meta.get("version", 0)}, "council": council["code"]}
 
@@ -324,6 +341,8 @@ async def run_followup(user_id: str, council_code: str, summary: str, plan: dict
                      "plan": json.dumps(plan, ensure_ascii=False), "history": history, "message": message,
                      "memory": memory_text, "strategies": st.catalog_text(catalog), "frameworks": st.frameworks_text(fws)}
         raw, meta = await _call("followup", variables, user_id, (consult_id, turn, message))
+    if config.MOCK:
+        await generation_stream.mock("followup", raw)
     new_plan = None
     if raw.get("update_plan") and isinstance(raw.get("plan"), dict):
         try:
@@ -428,6 +447,8 @@ async def run_roundtable(user_id: str, council_code: str, situation: str, plan: 
                      "plan": json.dumps(brief, ensure_ascii=False)[:2500], "topic": topic or "锦囊的思路对不对、有没有更好的打法",
                      "memory": memory_text, "moderator": names.get(MODERATOR, "军师")}
         raw, meta = await _call("roundtable", variables, user_id, (consult_id, "rt", turn, topic, *seats))
+    if config.MOCK:
+        await generation_stream.mock("roundtable", raw)
     return normalize_roundtable(raw, seats), {"prompt_versions": {"roundtable": meta.get("version", 0)}}
 
 
